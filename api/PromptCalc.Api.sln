@@ -1,0 +1,27 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Purpose: Define the PromptCalc API solution layout.
+# Persists: None.
+# Security Risks: None.
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31912.275
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PromptCalc.Api", "src\PromptCalc.Api\PromptCalc.Api.csproj", "{A272A977-0CB4-453E-9B8E-751D949E7CA7}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PromptCalc.Api.Tests", "tests\PromptCalc.Api.Tests\PromptCalc.Api.Tests.csproj", "{B4168B2F-C4BC-4B16-BA4E-1F557A84CAAA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A272A977-0CB4-453E-9B8E-751D949E7CA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A272A977-0CB4-453E-9B8E-751D949E7CA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A272A977-0CB4-453E-9B8E-751D949E7CA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A272A977-0CB4-453E-9B8E-751D949E7CA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4168B2F-C4BC-4B16-BA4E-1F557A84CAAA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4168B2F-C4BC-4B16-BA4E-1F557A84CAAA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4168B2F-C4BC-4B16-BA4E-1F557A84CAAA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4168B2F-C4BC-4B16-BA4E-1F557A84CAAA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

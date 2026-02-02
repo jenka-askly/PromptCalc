@@ -1,0 +1,20 @@
+# Purpose: Ignore build artifacts and local tooling state.
+# Persists: None.
+# Security Risks: None.
+
+bin/
+obj/
+**/bin/
+**/obj/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+node_modules/
+dist/
+
+local.settings.json
+.env
