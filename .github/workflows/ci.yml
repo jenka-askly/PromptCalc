@@ -1,0 +1,47 @@
+# Purpose: Run CI builds/tests for the API and web frontend.
+# Persists: None.
+# Security Risks: None.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore API
+        run: dotnet restore api/PromptCalc.Api.sln
+
+      - name: Build API
+        run: dotnet build api/PromptCalc.Api.sln -c Release --no-restore
+
+      - name: Test API
+        run: dotnet test api/PromptCalc.Api.sln -c Release --no-build
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web Dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Build Web
+        run: npm run build
+        working-directory: web
