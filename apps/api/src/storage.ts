@@ -8,7 +8,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 
 import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
-import { TableClient, TableServiceClient } from "@azure/data-tables";
+import { TableClient } from "@azure/data-tables";
 import { logEvent } from "@promptcalc/logger";
 
 const DEFAULT_STORAGE_CONNECTION = "UseDevelopmentStorage=true";
@@ -38,9 +38,16 @@ export const getTableClient = async (traceId?: string): Promise<TableClient> => 
 
   const connectionString = getStorageConnectionString();
   const tableName = getTableName();
-  const service = TableServiceClient.fromConnectionString(connectionString);
-  await service.createTableIfNotExists(tableName);
-  const client = service.getTableClient(tableName);
+  const client = TableClient.fromConnectionString(connectionString, tableName);
+
+  try {
+    await client.createTable();
+  } catch (error) {
+    const code = error instanceof Error ? (error as { code?: string }).code : undefined;
+    if (code !== "TableAlreadyExists") {
+      throw error;
+    }
+  }
 
   logEvent({
     level: "info",
