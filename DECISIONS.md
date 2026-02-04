@@ -12,3 +12,6 @@ Security Risks: None.
 - Deterministic scanner bans `eval` / `Function` / `new Function` and must remain.
 - Artifacts are contract/spec-driven; `spec/SPEC.md` is the source of truth.
 - Plan: two execution modes (form vs expression via a safe evaluator) to cover both UI-first and standard calculator prompts.
+
+## 2026-02-05
+- AI scan must not fail artifacts for allowed-by-design patterns (inline JS, postMessage, or CSP unsafe-inline) when offline sandboxed rules are satisfied.

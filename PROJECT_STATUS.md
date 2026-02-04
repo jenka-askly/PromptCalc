@@ -31,9 +31,9 @@ Step 5 — End-to-end prototype validation (per README).
 - PromptCalc generates offline calculator HTML artifacts based on the spec in `spec/SPEC.md`.
 - Artifacts run in a sandboxed iframe, and policy scanning rejects disallowed patterns.
 - The API supports generating calculators and managing versions for saved calculators.
+- AI scan rubric now aligns with the sandbox model; inline JS, postMessage, and CSP unsafe-inline are allowed by design.
 
 ## Open Issues
-- AI_SCAN_FAILED: AI scan refuses "Simple standard calculator" generation; review AI scan issue summaries after recent logging update.
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
 - DISALLOWED_PATTERN refusals when model output includes `new Function` for a standard calculator.
 - OpenAI Responses schema strictness (text.format) causes retries; currently falling back to `json_object`.
