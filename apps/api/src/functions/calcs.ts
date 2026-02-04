@@ -24,7 +24,7 @@ import {
 import { resolveGenerationGate } from "../generation/gate";
 import {
   formatAiScanIssueSummary,
-  partitionAiScanIssues,
+  evaluateAiScanPolicy,
   stringifyAiScanIssueSummaries,
   summarizeAiScanIssues,
 } from "../generation/aiScan";
@@ -348,6 +348,25 @@ const buildAiScanIssueLogPayload = (issues: unknown[]) => {
     summaryLines,
     summaryJson: stringifyAiScanIssueSummaries(summaries, 4096),
   };
+};
+
+const pickAiScanSafeAlternative = (categories: Set<string>): string => {
+  if (categories.has("credential_capture")) {
+    return "Remove password/login fields from the calculator UI.";
+  }
+  if (categories.has("networking") || categories.has("external_resource")) {
+    return "Remove network calls or external resource loads; use built-in data broker (future).";
+  }
+  if (categories.has("dynamic_code")) {
+    return "Remove eval/Function/string-based timers or dynamic script injection.";
+  }
+  if (categories.has("navigation")) {
+    return "Remove window.open/top.location navigation or escape attempts.";
+  }
+  if (categories.has("data_exfiltration")) {
+    return "Remove data exfiltration logic from the artifact.";
+  }
+  return "Remove disallowed behavior from the artifact.";
 };
 
 const buildRefusalResponse = (
@@ -1353,11 +1372,19 @@ const generateCalc = async (
     const codeScanSystem = [
       "Return JSON only. No markdown. No prose.",
       "Review the HTML and decide if it is safe for an offline, sandboxed calculator artifact.",
+      "Warning banners like \"Do not enter passwords\" are allowed mitigations and must NOT be treated as credential capture.",
+      "DOM APIs (document.getElementById/querySelector/addEventListener) are allowed and are NOT dynamic code execution.",
+      "Dynamic code execution is ONLY: eval, Function/new Function, setTimeout/setInterval with string arguments,",
+      "dynamic script injection, or compiling code from strings.",
       "Allowed patterns when offline/sandboxed:",
       "- Inline <script> and inline event handlers that only compute locally and do not attempt networking,",
       "  dynamic code compilation, or navigation.",
       "- CSP meta tags using 'unsafe-inline' for script-src/style-src (single-file v1 requirement).",
       "- window.postMessage usage for handshake or parent communication, if not used for networking or secrets.",
+      "- Inline script/style blocks in single-file artifacts.",
+      "- Event listeners for buttons/inputs.",
+      "- postMessage for handshake.",
+      "- Offline warning banner.",
       "Disallowed categories (must flag):",
       "- networking: fetch/XHR/WebSocket/sendBeacon/EventSource or any network API usage.",
       "- external_resource: any external resource load (<script src>, <img src>, <link>, fonts, @import, url()).",
@@ -1439,13 +1466,21 @@ const generateCalc = async (
         : [];
     const isSafe = parsedDecision.isSafe ?? parsedDecision.safe;
 
-    const { disallowed, allowed, uncategorized } = partitionAiScanIssues(parsedIssues);
+    const { disallowed, allowed, ignored, uncategorized } = evaluateAiScanPolicy(parsedIssues);
     if (disallowed.length > 0) {
       const issueLog = buildAiScanIssueLogPayload(disallowed);
+      const disallowedCategories = new Set(
+        issueLog.summaries
+          .map((summary) => summary.category)
+          .filter((category): category is string => Boolean(category))
+      );
+      const safeAlternative = pickAiScanSafeAlternative(disallowedCategories);
+      const categoryList =
+        disallowedCategories.size > 0 ? ` (${[...disallowedCategories].join(", ")})` : "";
       const reason = buildRefusalReason(
         "AI_SCAN_FAILED",
-        "AI code scan flagged disallowed behavior. Review the issues below.",
-        "Use a smaller, simpler offline calculator prompt.",
+        `AI code scan flagged disallowed behavior${categoryList}. Review the issues below.`,
+        safeAlternative,
         { details: issueLog.summaries }
       );
       logEvent({
@@ -1461,6 +1496,7 @@ const generateCalc = async (
     }
     if (parsedIssues.length > 0) {
       const allowedLog = buildAiScanIssueLogPayload(allowed);
+      const ignoredLog = buildAiScanIssueLogPayload(ignored);
       const uncategorizedLog = buildAiScanIssueLogPayload(uncategorized);
       logEvent({
         level: "info",
@@ -1469,6 +1505,8 @@ const generateCalc = async (
         event: "artifact.aiScan.allowed",
         allowedIssuesCount: allowedLog.count,
         allowedIssues: allowedLog.summaryJson,
+        ignoredIssuesCount: ignoredLog.count,
+        ignoredIssues: ignoredLog.summaryJson,
         uncategorizedIssuesCount: uncategorizedLog.count,
         uncategorizedIssues: uncategorizedLog.summaryJson,
       });

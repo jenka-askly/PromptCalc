@@ -6,6 +6,18 @@ Security Risks: None.
 
 # CODEX Log
 
+## 2026-02-04
+**Summary**
+- Refined AI scan rubric to explicitly allow warning banners, DOM event wiring, and clarified dynamic code execution scope.
+- Added deterministic post-processing guardrails plus tests to suppress known false positives while reporting disallowed evidence.
+- Updated AI scan refusal messaging with targeted alternatives and logged ignored/allowed issue groups.
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- Confirm offline warning banner text no longer triggers credential-capture refusals.
+
 ## 2026-02-05
 **Summary**
 - Aligned AI artifact scan rubric with sandbox policy to allow inline JS, postMessage, and unsafe-inline CSP while still refusing true violations.
