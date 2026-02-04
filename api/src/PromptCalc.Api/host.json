@@ -1,8 +1,0 @@
-{
-  "fileHeader": {
-    "purpose": "Configure the Azure Functions host runtime settings.",
-    "persists": "None.",
-    "securityRisks": "None."
-  },
-  "version": "2.0"
-}
