@@ -10,7 +10,7 @@ Security Risks: Describes enforcement rules for untrusted, AI-generated calculat
 This document is the single source of truth for the PromptCalc prototype specification. All other docs, schemas, and policies must align to this file.
 
 ## Spec version
-`specVersion: "1.0"`
+`specVersion: "1.1"`
 
 ## Overview
 PromptCalc produces offline calculator artifacts (HTML with inline CSS/JS) that run in a locked-down iframe. The artifact is always untrusted. All enforcement and validation happen outside the artifact.
@@ -18,10 +18,10 @@ PromptCalc produces offline calculator artifacts (HTML with inline CSS/JS) that 
 ## Manifest
 Every calculator must include a manifest with the following required fields:
 
-- `specVersion` (string, must be `1.0`)
+- `specVersion` (string, must be `1.1`)
 - `title` (string)
 - `description` (string)
-- `executionModel` (enum): `"expression" | "eventHandlers" | "customJS"`
+- `executionModel` (enum): `"form" | "expression"`
 - `capabilities` (array of strings)
 - `inputs` (array of strings)
 - `outputs` (array of strings)
@@ -30,9 +30,8 @@ Every calculator must include a manifest with the following required fields:
 - `hash` (string, integrity hash of the full artifact)
 
 ## Execution models
-- `expression`: calculator logic is declared as expressions over inputs.
-- `eventHandlers`: calculator logic is limited to declarative event handler bindings.
-- `customJS`: calculator logic includes inline JavaScript (still subject to policy scanning and runtime controls).
+- `form`: inputs are typed fields; computation uses explicit JavaScript arithmetic with named functions. No expression parsing.
+- `expression`: UI includes an expression display/keypad or formula input; evaluation must use a safe arithmetic evaluator (shunting-yard) for `+ - * /` and parentheses. No `eval`, `Function`, or dynamic code execution.
 
 ## Artifact constraints
 - Output is a complete, self-contained HTML artifact with inline CSS/JS only.

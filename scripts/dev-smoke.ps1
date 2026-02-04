@@ -11,9 +11,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $sampleManifest = @{
-  specVersion = "1.0"
+  specVersion = "1.1"
   title = "Offline Add Calculator"
-  executionModel = "eventHandlers"
+  executionModel = "form"
   capabilities = @{ network = $false }
   inputs = @()
   outputs = @()

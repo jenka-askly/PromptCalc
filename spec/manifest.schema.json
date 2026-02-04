@@ -19,7 +19,7 @@
   "properties": {
     "specVersion": {
       "type": "string",
-      "const": "1.0"
+      "const": "1.1"
     },
     "title": {
       "type": "string",
@@ -31,7 +31,7 @@
     },
     "executionModel": {
       "type": "string",
-      "enum": ["expression", "eventHandlers", "customJS"]
+      "enum": ["form", "expression"]
     },
     "capabilities": {
       "type": "array",

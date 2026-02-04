@@ -17,6 +17,10 @@ import type { RefusalCode } from "@promptcalc/types";
 
 import { getUserContext } from "../auth";
 import { getGenerationConfig } from "../generation/config";
+import {
+  getExecutionModelRuleText,
+  selectExecutionModelFromPrompt,
+} from "../generation/executionModel";
 import { resolveGenerationGate } from "../generation/gate";
 import {
   buildGenerateOkResponse,
@@ -31,6 +35,7 @@ import {
 } from "../openai/client";
 import { getPromptCalcPolicy } from "../policy/policy";
 import { scanArtifactHtml } from "../policy/scanner";
+import { SAFE_EXPRESSION_EVALUATOR_SNIPPET } from "../templates/safeExpressionEvaluator";
 import { getTraceId } from "../trace";
 import { getBlobPath, getContainerClient, getMaxArtifactBytes, getTableClient } from "../storage";
 
@@ -255,6 +260,9 @@ const codeScanSchema = {
   required: ["isSafe"],
 };
 
+const SUPPORTED_SPEC_VERSION = "1.1";
+const EXPRESSION_EVALUATOR_REGEX = /\bcomputeExpr\s*\(/;
+
 const logTableError = (
   traceId: string,
   error: unknown,
@@ -312,7 +320,7 @@ const isValidManifest = (manifest: Record<string, unknown>): boolean => {
   const executionModel = manifest.executionModel;
   const capabilities = manifest.capabilities;
 
-  if (typeof specVersion !== "string") {
+  if (specVersion !== SUPPORTED_SPEC_VERSION) {
     return false;
   }
 
@@ -320,7 +328,7 @@ const isValidManifest = (manifest: Record<string, unknown>): boolean => {
     return false;
   }
 
-  if (typeof executionModel !== "string") {
+  if (executionModel !== "form" && executionModel !== "expression") {
     return false;
   }
 
@@ -954,15 +962,25 @@ const generateCalc = async (
     return buildRefusalResponse(traceId, 200, reason);
   }
 
+  const expectedExecutionModel = selectExecutionModelFromPrompt(prompt);
   const generationSystem = [
     "Return JSON only. No markdown. No prose.",
     "You generate a single-file offline calculator HTML artifact for PromptCalc.",
-    "Do not use eval(), new Function(...), or Function(...).",
+    "Never use eval, Function, new Function, setTimeout(string), setInterval(string), or dynamic script injection.",
     "Do not generate any dynamic code execution.",
     "Do not generate any <script src=...>, <link ...>, @import, or url(...).",
     "All logic must be implemented with ordinary named functions and event listeners (e.g., addEventListener).",
     "No network access. No connect-src usage beyond 'none'.",
-    "If you need to compute expressions, implement a fixed parser for + - * / and parentheses, or limit operations to explicit buttons/fields; never use Function/eval.",
+    "Execution model selection rules:",
+    getExecutionModelRuleText(),
+    `For this prompt, set executionModel=\"${expectedExecutionModel}\".`,
+    "Execution model semantics:",
+    "- form: typed inputs + explicit arithmetic, no expression parsing.",
+    "- expression: expression input/keypad with safe evaluator only.",
+    "Safe evaluator snippet for expression mode (use verbatim or adapted, no eval/Function):",
+    SAFE_EXPRESSION_EVALUATOR_SNIPPET,
+    "If you need to compute expressions, use the safe evaluator snippet only.",
+    "For CNC/mortgage/beam domain calculators, always use executionModel=\"form\".",
     "Rules:",
     "- Output must be a single HTML file and a manifest JSON object.",
     "- Output MUST be a single JSON object with no markdown, code fences, or commentary.",
@@ -982,7 +1000,7 @@ const generateCalc = async (
     "- Do not refuse; classifier already handled refusals.",
     "Return JSON that exactly matches the schema.",
     "JSON schema example:",
-    "{\"artifactHtml\":\"<!doctype html>...\",\"manifest\":{\"specVersion\":\"1.0\",\"title\":\"...\",\"executionModel\":\"static\",\"capabilities\":{\"network\":false}}}",
+    "{\"artifactHtml\":\"<!doctype html>...\",\"manifest\":{\"specVersion\":\"1.1\",\"title\":\"...\",\"executionModel\":\"form\",\"capabilities\":{\"network\":false}}}",
   ].join("\\n");
 
   const retryNotice =
@@ -1216,6 +1234,24 @@ const generateCalc = async (
         event: "artifact.tooLarge",
         artifactBytes: finalArtifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
+      });
+      return buildRefusalResponse(traceId, 200, reason);
+    }
+
+    if (
+      finalManifest?.executionModel === "expression" &&
+      !EXPRESSION_EVALUATOR_REGEX.test(finalHtml)
+    ) {
+      const reason = buildRefusalReason(
+        "INVALID_MODEL_OUTPUT",
+        "Expression calculators must include the safe computeExpr evaluator.",
+        "Use a standard calculator prompt or request typed fields."
+      );
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.evaluator.missing",
       });
       return buildRefusalResponse(traceId, 200, reason);
     }
