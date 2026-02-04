@@ -18,6 +18,7 @@
     "@promptcalc/types": "file:../../shared/types"
   },
   "devDependencies": {
+    "@types/node": "^25.2.0",
     "typescript": "^5.4.5"
   }
 }

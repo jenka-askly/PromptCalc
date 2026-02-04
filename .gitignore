@@ -2,21 +2,69 @@
 # Persists: None.
 # Security Risks: None.
 
+# =========================
+# Build outputs (general)
+# =========================
 bin/
 obj/
 **/bin/
 **/obj/
+dist/
+build/
+coverage/
+
+# =========================
+# Node / JS
+# =========================
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+local.settings.json
+apps/api/local.settings.json
+
+# =========================
+# Vite / frontend
+# =========================
+apps/web/dist/
+apps/web/.vite/
+
+# =========================
+# Azure Functions (local)
+# =========================
+apps/api/bin/
+apps/api/obj/
+
+# =========================
+# Visual Studio / VS Code / IDEs
+# =========================
 .vscode/
 .idea/
+.vs/
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
 
-node_modules/
-dist/
-
-local.settings.json
-.env
-/package-lock.json
+# Visual Studio SQLite caches (what you just saw)
+*.sqlite
+*.sqlite3
 /.vs/slnx.sqlite
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Package manager
+# =========================
+/package-lock.json
