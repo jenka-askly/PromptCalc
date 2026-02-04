@@ -1,25 +1,52 @@
 # Purpose: Define scanner policy limits and banned patterns for PromptCalc artifacts.
 # Persists: None.
 # Security Risks: Controls rejection criteria for untrusted, AI-generated artifacts.
-specVersion: "1.0"
-maxArtifactBytes: 204800
-cspTemplate: "default-src 'none'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+specVersion: "1.1"
+maxArtifactBytes: 200000
+requiredBannerText: "Generated calculator (offline). Do not enter passwords."
+requiredCspDirectives:
+  - "default-src 'none'"
+  - "connect-src 'none'"
+  - "img-src 'none'"
+  - "script-src 'unsafe-inline'"
+  - "style-src 'unsafe-inline'"
+  - "base-uri 'none'"
+  - "form-action 'none'"
+  - "object-src 'none'"
 bannedPatterns:
-  - "fetch("
-  - "XMLHttpRequest"
-  - "WebSocket"
-  - "sendBeacon"
-  - "<script"
-  - "src="
-  - "eval("
-  - "new Function"
-  - "Function("
-  - "import("
-  - "setInterval("
-  - "requestAnimationFrame("
-  - "while(true)"
-  - "for(;;)"
-  - "window.open("
-  - "top.location"
-  - "location.href="
-  - "document.location="
+  - id: DISALLOWED_NETWORK
+    patterns:
+      - "fetch("
+      - "XMLHttpRequest"
+      - "WebSocket"
+      - "EventSource"
+      - "sendBeacon"
+  - id: DISALLOWED_EVAL
+    patterns:
+      - "eval("
+      - "new Function"
+      - "Function("
+      - "import("
+  - id: DISALLOWED_EXTERNAL_DEPENDENCY
+    patterns:
+      - "<script src="
+      - "<link rel="
+      - "@import"
+      - "url("
+  - id: DISALLOWED_CREDENTIAL_UI
+    patterns:
+      - "type=\"password\""
+      - "type='password'"
+  - id: DISALLOWED_NETWORK
+    patterns:
+      - "window.open"
+      - "top.location"
+      - "parent.location"
+      - "document.location="
+bannedTags:
+  - id: DISALLOWED_EXTERNAL_DEPENDENCY
+    tags:
+      - "iframe"
+      - "object"
+      - "embed"
+      - "base"
