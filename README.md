@@ -27,7 +27,7 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
   - `PROMPTCALC_CONTAINER=promptcalc`
   - `DEV_USER_ID=dev-user`
   - `OPENAI_API_KEY=...`
-  - `OPENAI_MODEL=gpt-4.1`
+  - `OPENAI_MODEL=gpt-4o-mini`
   - `OPENAI_BASE_URL=https://api.openai.com/v1`
   - `GENERATION_ENABLED=true`
   - `MAX_ARTIFACT_BYTES=200000`
@@ -38,6 +38,13 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
   - Start it before `npm run dev` if you want persistence.
   - If you see “API version not supported”, ensure `--skipApiVersionCheck` is used.
 - Optional smoke test: `pwsh scripts/dev-smoke.ps1` (requires the API host running).
+- Manual generate test (PowerShell):
+  ```powershell
+  $payload = @{ prompt = "Simple tip calculator with bill + tip% + total." }
+  Invoke-RestMethod -Method Post -Uri "http://localhost:7071/api/calcs/generate" -ContentType "application/json" -Body (
+    $payload | ConvertTo-Json -Depth 5
+  ) | ConvertTo-Json -Depth 6 | Write-Host
+  ```
 
 ## Authentication (Easy Auth)
 - Production runs with Azure App Service Authentication / Static Web Apps Easy Auth using Microsoft identity.

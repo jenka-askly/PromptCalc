@@ -4,5 +4,9 @@
  * Security Risks: None.
  */
 
+import { validateOpenAIConfig } from "./generation/config";
+
+validateOpenAIConfig();
+
 import "./functions/health";
 import "./functions/calcs";
