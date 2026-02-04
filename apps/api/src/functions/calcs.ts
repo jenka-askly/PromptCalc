@@ -172,6 +172,22 @@ const buildVersionRow = (versionId: string) => `VER_${safeKey(versionId)}`;
 const truncate = (value: string, maxLength: number) =>
   value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
 
+const listToString = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return value.map(String).join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (!value) {
+    return "";
+  }
+  return JSON.stringify(value);
+};
+
+const getObjectKeys = (value: unknown): string[] =>
+  value && typeof value === "object" ? Object.keys(value as Record<string, unknown>) : [];
+
 const logTableError = (
   traceId: string,
   error: unknown,
@@ -661,90 +677,91 @@ const generateCalc = async (
   const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
-  const body = await parseGenerateRequestBody(req);
-  const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
-
-  logEvent({
-    level: "info",
-    op,
-    traceId,
-    event: "request.start",
-    method: req.method,
-    route: "/api/calcs/generate",
-    userId,
-    isAuthenticated,
-    identityProvider,
-    promptLen: prompt.length,
-    baseCalcId: body?.baseCalcId,
-    baseVersionId: body?.baseVersionId,
-  });
-
-  if (!isAuthenticated && !isDevUser) {
-    const durationMs = Date.now() - startedAt;
-    logEvent({
-      level: "warn",
-      op,
-      traceId,
-      event: "request.end",
-      durationMs,
-      status: 401,
-    });
-    return unauthorizedResponse(traceId);
-  }
-
-  if (!body || prompt.length === 0) {
-    const durationMs = Date.now() - startedAt;
-    logEvent({
-      level: "warn",
-      op,
-      traceId,
-      event: "request.end",
-      durationMs,
-      status: 400,
-    });
-    return jsonResponse(traceId, 400, {
-      code: "BAD_REQUEST",
-      message: "prompt is required.",
-    });
-  }
-
-  const config = await getGenerationConfig();
-  const gateReason = resolveGenerationGate(config);
-  if (gateReason) {
-    logEvent({
-      level: "warn",
-      op,
-      traceId,
-      event: "generation.gated",
-      code: gateReason.code,
-    });
-    return buildRefusalResponse(traceId, 200, gateReason);
-  }
-
-  if (!config.apiKey || config.apiKey.trim().length === 0) {
-    logEvent({
-      level: "error",
-      op,
-      traceId,
-      event: "openai.not_configured",
-    });
-    return jsonResponse(traceId, 500, {
-      code: "OPENAI_NOT_CONFIGURED",
-      traceId,
-    });
-  }
-
-  const policy = await getPromptCalcPolicy();
-  const openAIConfig = {
-    apiKey: config.apiKey,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    timeoutMs: config.timeoutMs,
-    maxTokens: config.maxTokens,
-  };
-
-  let promptDecision: PromptScanDecision;
   try {
+    const body = await parseGenerateRequestBody(req);
+    const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+
+    logEvent({
+      level: "info",
+      op,
+      traceId,
+      event: "request.start",
+      method: req.method,
+      route: "/api/calcs/generate",
+      userId,
+      isAuthenticated,
+      identityProvider,
+      promptLen: prompt.length,
+      baseCalcId: body?.baseCalcId,
+      baseVersionId: body?.baseVersionId,
+    });
+
+    if (!isAuthenticated && !isDevUser) {
+      const durationMs = Date.now() - startedAt;
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "request.end",
+        durationMs,
+        status: 401,
+      });
+      return unauthorizedResponse(traceId);
+    }
+
+    if (!body || prompt.length === 0) {
+      const durationMs = Date.now() - startedAt;
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "request.end",
+        durationMs,
+        status: 400,
+      });
+      return jsonResponse(traceId, 400, {
+        code: "BAD_REQUEST",
+        message: "prompt is required.",
+      });
+    }
+
+    const config = await getGenerationConfig();
+    const gateReason = resolveGenerationGate(config);
+    if (gateReason) {
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "generation.gated",
+        code: gateReason.code,
+      });
+      return buildRefusalResponse(traceId, 200, gateReason);
+    }
+
+    if (!config.apiKey || config.apiKey.trim().length === 0) {
+      logEvent({
+        level: "error",
+        op,
+        traceId,
+        event: "openai.not_configured",
+      });
+      return jsonResponse(traceId, 500, {
+        code: "OPENAI_NOT_CONFIGURED",
+        traceId,
+      });
+    }
+
+    const policy = await getPromptCalcPolicy();
+    const openAIConfig = {
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      timeoutMs: config.timeoutMs,
+      maxTokens: config.maxTokens,
+    };
+
+    let promptDecision: PromptScanDecision;
+    try {
     const promptScanSystem = [
       "You are a strict policy classifier for PromptCalc generation prompts.",
       "Disallow any intent that requests:",
@@ -1044,10 +1061,52 @@ const generateCalc = async (
       "openai.artifact.scan"
     );
 
+    const rawKeys = getObjectKeys(scanDecision.raw);
+    logEvent({
+      level: "info",
+      op,
+      traceId,
+      event: "artifact.aiScan.rawKeys",
+      keys: listToString(rawKeys),
+    });
+    for (const [key, value] of Object.entries(scanDecision.raw ?? {})) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        logEvent({
+          level: "info",
+          op,
+          traceId,
+          event: "artifact.aiScan.rawNestedKeys",
+          parentKey: key,
+          keys: listToString(getObjectKeys(value)),
+        });
+      }
+    }
+
+    const parsedKeys = getObjectKeys(scanDecision.parsed);
+    logEvent({
+      level: "info",
+      op,
+      traceId,
+      event: "artifact.aiScan.parsedKeys",
+      keys: listToString(parsedKeys),
+    });
+    for (const [key, value] of Object.entries(scanDecision.parsed ?? {})) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        logEvent({
+          level: "info",
+          op,
+          traceId,
+          event: "artifact.aiScan.parsedNestedKeys",
+          parentKey: key,
+          keys: listToString(getObjectKeys(value)),
+        });
+      }
+    }
+
     if (!scanDecision.parsed.safe) {
       const reason = buildRefusalReason(
         "AI_SCAN_FAILED",
-        scanDecision.parsed.findings.join("; ") || "AI code scan flagged the artifact.",
+        listToString(scanDecision.parsed.findings) || "AI code scan flagged the artifact.",
         "Use a smaller, simpler offline calculator prompt."
       );
       logEvent({
@@ -1055,19 +1114,11 @@ const generateCalc = async (
         op,
         traceId,
         event: "artifact.aiScan.failed",
-        findings: scanDecision.parsed.findings.length,
+        findings: listToString(scanDecision.parsed.findings),
       });
       return buildRefusalResponse(traceId, 200, reason);
     }
   } catch (error) {
-    if (error instanceof OpenAIBadRequestError) {
-      return buildOpenAIBadRequestResponse(traceId, 502);
-    }
-    const reason = buildRefusalReason(
-      "OPENAI_ERROR",
-      "AI code scan failed.",
-      "Try again with a simpler offline calculator."
-    );
     logEvent({
       level: "warn",
       op,
@@ -1075,68 +1126,100 @@ const generateCalc = async (
       event: "artifact.aiScan.error",
       message: error instanceof Error ? error.message : "unknown error",
     });
-    return buildRefusalResponse(traceId, 502, reason);
   }
 
-  if (!isValidManifest(finalManifest)) {
-    const reason = buildRefusalReason(
-      "OPENAI_ERROR",
-      "Generated manifest is missing required fields.",
-      "Try a simpler offline calculator prompt."
+    if (!isValidManifest(finalManifest)) {
+      const reason = buildRefusalReason(
+        "OPENAI_ERROR",
+        "Generated manifest is missing required fields.",
+        "Try a simpler offline calculator prompt."
+      );
+      return buildRefusalResponse(traceId, 502, reason);
+    }
+
+    const calcId = normalizeId(body.baseCalcId || randomUUID());
+    const versionId = normalizeId(randomUUID());
+    const nowIso = new Date().toISOString();
+    const artifactHash = computeSha256(finalHtml);
+    const promptLen = prompt.length;
+    const blobPath = getBlobPath(userId, calcId, versionId);
+
+    let calculatorEntity = await loadCalculatorEntity(traceId, userId, calcId);
+    if (!calculatorEntity) {
+      calculatorEntity = {
+        partitionKey: buildCalcPartition(userId),
+        rowKey: buildCalcRow(calcId),
+        entityType: "Calculator",
+        calcId: normalizeId(calcId),
+        userId: normalizeId(userId),
+        title: (finalManifest.title as string) || "Untitled",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        currentVersionId: versionId,
+      };
+    } else {
+      calculatorEntity = {
+        ...calculatorEntity,
+        title: (finalManifest.title as string) || calculatorEntity.title,
+        updatedAt: nowIso,
+        currentVersionId: versionId,
+      };
+    }
+
+    const versionEntity: CalculatorVersionEntity = {
+      partitionKey: String(buildVersionPartition(userId, calcId)),
+      rowKey: String(buildVersionRow(versionId)),
+      entityType: "CalculatorVersion",
+      userId: String(userId),
+      calcId: String(calcId),
+      versionId: String(versionId),
+      createdAt: String(nowIso),
+      status: String("ok") as CalculatorVersionEntity["status"],
+      promptLen,
+      prompt,
+      manifestBlobPath: String(blobPath.manifest),
+      artifactBlobPath: String(blobPath.artifact),
+      artifactHash: String(artifactHash),
+    };
+
+    try {
+      await persistArtifactBlob(traceId, blobPath.artifact, finalHtml);
+      await persistManifestBlob(traceId, blobPath.manifest, finalManifest);
+      await persistCalculatorVersionEntity(traceId, versionEntity);
+      await persistCalculatorEntity(traceId, calculatorEntity);
+    } catch (error) {
+      const durationMs = Date.now() - startedAt;
+      logEvent({
+        level: "error",
+        op,
+        traceId,
+        event: "request.end",
+        durationMs,
+        status: 500,
+      });
+      return storageErrorResponse(traceId);
+    }
+
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "info",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 200,
+      artifactBytes,
+      calcId,
+      versionId,
+    });
+
+    context.log(`Generated calculator ${calcId} version ${versionId}.`);
+
+    return jsonResponse(
+      traceId,
+      200,
+      buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml)
     );
-    return buildRefusalResponse(traceId, 502, reason);
-  }
-
-  const calcId = normalizeId(body.baseCalcId || randomUUID());
-  const versionId = normalizeId(randomUUID());
-  const nowIso = new Date().toISOString();
-  const artifactHash = computeSha256(finalHtml);
-  const promptLen = prompt.length;
-  const blobPath = getBlobPath(userId, calcId, versionId);
-
-  let calculatorEntity = await loadCalculatorEntity(traceId, userId, calcId);
-  if (!calculatorEntity) {
-    calculatorEntity = {
-      partitionKey: buildCalcPartition(userId),
-      rowKey: buildCalcRow(calcId),
-      entityType: "Calculator",
-      calcId: normalizeId(calcId),
-      userId: normalizeId(userId),
-      title: (finalManifest.title as string) || "Untitled",
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      currentVersionId: versionId,
-    };
-  } else {
-    calculatorEntity = {
-      ...calculatorEntity,
-      title: (finalManifest.title as string) || calculatorEntity.title,
-      updatedAt: nowIso,
-      currentVersionId: versionId,
-    };
-  }
-
-  const versionEntity: CalculatorVersionEntity = {
-    partitionKey: String(buildVersionPartition(userId, calcId)),
-    rowKey: String(buildVersionRow(versionId)),
-    entityType: "CalculatorVersion",
-    userId: String(userId),
-    calcId: String(calcId),
-    versionId: String(versionId),
-    createdAt: String(nowIso),
-    status: String("ok") as CalculatorVersionEntity["status"],
-    promptLen,
-    prompt,
-    manifestBlobPath: String(blobPath.manifest),
-    artifactBlobPath: String(blobPath.artifact),
-    artifactHash: String(artifactHash),
-  };
-
-  try {
-    await persistArtifactBlob(traceId, blobPath.artifact, finalHtml);
-    await persistManifestBlob(traceId, blobPath.manifest, finalManifest);
-    await persistCalculatorVersionEntity(traceId, versionEntity);
-    await persistCalculatorEntity(traceId, calculatorEntity);
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     logEvent({
@@ -1147,29 +1230,15 @@ const generateCalc = async (
       durationMs,
       status: 500,
     });
-    return storageErrorResponse(traceId);
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "request.error",
+      message: error instanceof Error ? error.message : "unknown error",
+    });
+    return jsonResponse(traceId, 500, { code: "INTERNAL", traceId });
   }
-
-  const durationMs = Date.now() - startedAt;
-  logEvent({
-    level: "info",
-    op,
-    traceId,
-    event: "request.end",
-    durationMs,
-    status: 200,
-    artifactBytes,
-    calcId,
-    versionId,
-  });
-
-  context.log(`Generated calculator ${calcId} version ${versionId}.`);
-
-  return jsonResponse(
-    traceId,
-    200,
-    buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml)
-  );
 };
 
 const listCalcs = async (
