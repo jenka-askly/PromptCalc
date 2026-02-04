@@ -25,7 +25,34 @@ describe("CalculatorViewer", () => {
 
     window.dispatchEvent(
       new MessageEvent("message", {
-        data: { type: "ready" },
+        data: { type: "PROMPTCALC_READY" },
+        source: fakeWindow as unknown as MessageEventSource,
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(60);
+
+    const statusText = container.querySelector(".viewer-status")?.textContent ?? "";
+    expect(statusText).toContain("Ready");
+
+    vi.useRealTimers();
+  });
+
+  it("injects a bootstrap and stays ready when a PONG arrives", async () => {
+    vi.useFakeTimers();
+
+    const { container } = render(<CalculatorViewer artifactHtml={MINIMAL_HTML} timeoutMs={50} />);
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const fakeWindow = new EventTarget() as unknown as Window;
+    const srcDoc = iframe.getAttribute("srcdoc") ?? "";
+
+    expect(srcDoc).toContain("promptcalc-ready");
+
+    Object.defineProperty(iframe, "contentWindow", { value: fakeWindow });
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "PROMPTCALC_PONG" },
         source: fakeWindow as unknown as MessageEventSource,
       })
     );

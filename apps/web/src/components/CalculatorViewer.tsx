@@ -4,7 +4,7 @@
  * Security Risks: Handles untrusted HTML and cross-window postMessage events.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getCspTemplate } from "../policy/csp";
 
@@ -21,7 +21,7 @@ const DEFAULT_TIMEOUT_MS = 4000;
 
 const READY_BOOTSTRAP_ID = "promptcalc-ready";
 const READY_BOOTSTRAP_SCRIPT =
-  "<script id=\"promptcalc-ready\">(function(){const sendReady=()=>{try{window.parent.postMessage({type:\"ready\"},\"*\");}catch{}};const handlePing=(event)=>{try{if(event&&event.data&&event.data.type===\"ping\"){window.parent.postMessage({type:\"pong\"},\"*\");}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",sendReady,{once:true});}else{sendReady();}window.addEventListener(\"message\",handlePing);})();</script>";
+  "<script id=\"promptcalc-ready\">(function(){try{const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const sendReady=()=>{safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now()});safePost({type:\"ready\"});};const scheduleRetry=()=>{try{setTimeout(sendReady,250);}catch{}};const handlePing=(event)=>{try{const data=event&&event.data;if(data&&data.type===\"PROMPTCALC_PING\"){safePost({type:\"PROMPTCALC_PONG\",v:\"1\",ts:Date.now()});}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{sendReady();scheduleRetry();},{once:true});}else{sendReady();scheduleRetry();}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
 const READY_BOOTSTRAP_REGEX = new RegExp(
   `<script[^>]*id=["']${READY_BOOTSTRAP_ID}["'][^>]*>`,
   "i"
@@ -56,7 +56,7 @@ const ensureReadyBootstrap = (artifactHtml: string, cspMetaRegex: RegExp): strin
   return `${READY_BOOTSTRAP_SCRIPT}${artifactHtml}`;
 };
 
-const buildSrcDoc = (artifactHtml: string, csp: string): string => {
+const normalizeArtifactHtml = (artifactHtml: string, csp: string): string => {
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${csp}">`;
   const cspMetaRegex = /<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/i;
 
@@ -75,13 +75,19 @@ const buildSrcDoc = (artifactHtml: string, csp: string): string => {
 
 const buildBlankDoc = (): string => "<!doctype html><html><body></body></html>";
 
-const isReadyMessage = (data: unknown): data is { type: "ready"; traceId?: string } => {
+const isHandshakeMessage = (
+  data: unknown
+): data is { type: "ready" | "PROMPTCALC_READY" | "PROMPTCALC_PONG"; traceId?: string } => {
   if (!data || typeof data !== "object") {
     return false;
   }
 
   const record = data as { type?: unknown; traceId?: unknown };
-  if (record.type !== "ready") {
+  if (
+    record.type !== "ready" &&
+    record.type !== "PROMPTCALC_READY" &&
+    record.type !== "PROMPTCALC_PONG"
+  ) {
     return false;
   }
 
@@ -99,42 +105,23 @@ export const CalculatorViewer = ({
   const cspTemplate = useMemo(() => getCspTemplate(), []);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const timerRef = useRef<number | null>(null);
+  const retryRef = useRef<number | null>(null);
   const rateRef = useRef({ windowStart: 0, count: 0 });
+  const handshakeRef = useRef({ ready: false, pong: false });
+  const warningLoggedRef = useRef(false);
+  const listenerReadyRef = useRef(false);
+  const pingPendingRef = useRef(false);
   const [status, setStatus] = useState<ViewerStatus>("loading");
   const [errorCode, setErrorCode] = useState<ViewerErrorCode | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
   const [srcDoc, setSrcDoc] = useState<string>(buildBlankDoc());
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
       console.info("CalculatorViewer CSP:", cspTemplate);
     }
   }, [cspTemplate]);
-
-  useEffect(() => {
-    const nextDoc = buildSrcDoc(artifactHtml, cspTemplate);
-
-    setStatus("loading");
-    setErrorCode(null);
-    setTraceId(null);
-    setSrcDoc(nextDoc);
-
-    if (timerRef.current) {
-      window.clearTimeout(timerRef.current);
-    }
-
-    timerRef.current = window.setTimeout(() => {
-      setStatus("error");
-      setErrorCode("WATCHDOG_TIMEOUT");
-      setSrcDoc(buildBlankDoc());
-    }, timeoutMs);
-
-    return () => {
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-      }
-    };
-  }, [artifactHtml, cspTemplate, timeoutMs]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -154,11 +141,18 @@ export const CalculatorViewer = ({
 
       rateRef.current.count += 1;
 
-      if (!isReadyMessage(event.data)) {
+      if (!isHandshakeMessage(event.data)) {
         setStatus("error");
         setErrorCode("INVALID_MESSAGE");
         setSrcDoc(buildBlankDoc());
         return;
+      }
+
+      if (event.data.type === "ready" || event.data.type === "PROMPTCALC_READY") {
+        handshakeRef.current.ready = true;
+      }
+      if (event.data.type === "PROMPTCALC_PONG") {
+        handshakeRef.current.pong = true;
       }
 
       if (timerRef.current) {
@@ -172,8 +166,51 @@ export const CalculatorViewer = ({
     };
 
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    listenerReadyRef.current = true;
+    return () => {
+      listenerReadyRef.current = false;
+      window.removeEventListener("message", handleMessage);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!listenerReadyRef.current) {
+      return;
+    }
+
+    const nextDoc = normalizeArtifactHtml(artifactHtml, cspTemplate);
+
+    setStatus("loading");
+    setErrorCode(null);
+    setTraceId(null);
+    setSrcDoc(nextDoc);
+    handshakeRef.current = { ready: false, pong: false };
+    warningLoggedRef.current = false;
+    pingPendingRef.current = true;
+
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = window.setTimeout(() => {
+      if (!warningLoggedRef.current) {
+        console.warn("CalculatorViewer watchdog timeout", {
+          readyReceived: handshakeRef.current.ready,
+          pongReceived: handshakeRef.current.pong,
+        });
+        warningLoggedRef.current = true;
+      }
+      setStatus("error");
+      setErrorCode("WATCHDOG_TIMEOUT");
+      setSrcDoc(buildBlankDoc());
+    }, timeoutMs);
+
+    return () => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, [artifactHtml, cspTemplate, timeoutMs, retryToken]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -186,6 +223,48 @@ export const CalculatorViewer = ({
     }
   }, [srcDoc]);
 
+  const handleIframeLoad = useCallback(() => {
+    if (!pingPendingRef.current) {
+      return;
+    }
+
+    pingPendingRef.current = false;
+    const iframeWindow = iframeRef.current?.contentWindow;
+    if (!iframeWindow) {
+      return;
+    }
+
+    try {
+      iframeWindow.postMessage(
+        { type: "PROMPTCALC_PING", v: "1", ts: Date.now() },
+        "*"
+      );
+    } catch {
+      // Intentionally ignored to avoid throwing from untrusted frames.
+    }
+  }, []);
+
+  const handleRetry = () => {
+    if (retryRef.current) {
+      window.clearTimeout(retryRef.current);
+    }
+    retryRef.current = window.setTimeout(() => {
+      setRetryToken((prev) => prev + 1);
+    }, 0);
+  };
+
+  useEffect(
+    () => () => {
+      if (retryRef.current) {
+        window.clearTimeout(retryRef.current);
+      }
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+      }
+    },
+    []
+  );
+
   return (
     <section className="viewer">
       <div className="viewer-status">
@@ -194,6 +273,14 @@ export const CalculatorViewer = ({
         {status === "error" && `Error: ${errorCode ?? "UNKNOWN"}`}
         {traceId && <span className="viewer-trace">Trace: {traceId}</span>}
       </div>
+      {status === "error" && (
+        <div className="viewer-error" role="alert">
+          <p>Viewer failed to load the calculator content.</p>
+          <button type="button" onClick={handleRetry}>
+            Retry
+          </button>
+        </div>
+      )}
       <iframe
         ref={iframeRef}
         sandbox="allow-scripts"
@@ -201,6 +288,7 @@ export const CalculatorViewer = ({
         srcDoc={srcDoc}
         className="viewer-frame"
         title="Calculator Viewer"
+        onLoad={handleIframeLoad}
       />
     </section>
   );
