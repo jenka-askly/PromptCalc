@@ -14,7 +14,7 @@ import { createHash, randomUUID } from "crypto";
 
 import { logEvent } from "@promptcalc/logger";
 
-import { getUserId } from "../auth";
+import { getUserContext } from "../auth";
 import { getTraceId } from "../trace";
 import { getBlobPath, getContainerClient, getMaxArtifactBytes, getTableClient } from "../storage";
 
@@ -367,6 +367,8 @@ const saveCalc = async (
   const traceId = getTraceId(req.headers.get("traceparent"));
   const startedAt = Date.now();
   const op = "calcs.save";
+  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const userId = normalizeId(requestUserId);
 
   logEvent({
     level: "info",
@@ -375,6 +377,8 @@ const saveCalc = async (
     event: "request.start",
     method: req.method,
     route: "/api/calcs/save",
+    userId,
+    isDevUser,
   });
 
   const body = await parseRequestBody(req);
@@ -430,7 +434,6 @@ const saveCalc = async (
     });
   }
 
-  const userId = normalizeId(getUserId(req));
   const calcId = normalizeId(body.calcId || randomUUID());
   const versionId = normalizeId(randomUUID());
   const nowIso = new Date().toISOString();
@@ -527,6 +530,8 @@ const listCalcs = async (
   const traceId = getTraceId(req.headers.get("traceparent"));
   const startedAt = Date.now();
   const op = "calcs.list";
+  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const userId = normalizeId(requestUserId);
 
   logEvent({
     level: "info",
@@ -535,9 +540,9 @@ const listCalcs = async (
     event: "request.start",
     method: req.method,
     route: "/api/calcs",
+    userId,
+    isDevUser,
   });
-
-  const userId = normalizeId(getUserId(req));
   const partitionKey = buildCalcPartition(userId);
   const tableClient = await getTableClient(traceId);
   const items: CalculatorSummary[] = [];
@@ -597,6 +602,8 @@ const getCalc = async (
   const startedAt = Date.now();
   const op = "calcs.get";
   const calcId = req.params.calcId as string;
+  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const userId = normalizeId(requestUserId);
 
   logEvent({
     level: "info",
@@ -606,9 +613,9 @@ const getCalc = async (
     method: req.method,
     route: "/api/calcs/{calcId}",
     calcId,
+    userId,
+    isDevUser,
   });
-
-  const userId = normalizeId(getUserId(req));
   const tableClient = await getTableClient(traceId);
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
@@ -696,6 +703,8 @@ const getVersion = async (
   const op = "calcs.version.get";
   const calcId = req.params.calcId as string;
   const versionId = req.params.versionId as string;
+  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const userId = normalizeId(requestUserId);
 
   logEvent({
     level: "info",
@@ -706,9 +715,9 @@ const getVersion = async (
     route: "/api/calcs/{calcId}/versions/{versionId}",
     calcId,
     versionId,
+    userId,
+    isDevUser,
   });
-
-  const userId = normalizeId(getUserId(req));
   const tableClient = await getTableClient(traceId);
   let versionEntity: CalculatorVersionEntity | null = null;
 
@@ -796,6 +805,8 @@ const promoteVersion = async (
   const op = "calcs.version.promote";
   const calcId = req.params.calcId as string;
   const versionId = req.params.versionId as string;
+  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const userId = normalizeId(requestUserId);
 
   logEvent({
     level: "info",
@@ -806,9 +817,9 @@ const promoteVersion = async (
     route: "/api/calcs/{calcId}/versions/{versionId}/promote",
     calcId,
     versionId,
+    userId,
+    isDevUser,
   });
-
-  const userId = normalizeId(getUserId(req));
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
     const durationMs = Date.now() - startedAt;
@@ -924,6 +935,8 @@ const deleteCalc = async (
   const startedAt = Date.now();
   const op = "calcs.delete";
   const calcId = req.params.calcId as string;
+  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const userId = normalizeId(requestUserId);
 
   logEvent({
     level: "info",
@@ -933,9 +946,9 @@ const deleteCalc = async (
     method: req.method,
     route: "/api/calcs/{calcId}",
     calcId,
+    userId,
+    isDevUser,
   });
-
-  const userId = normalizeId(getUserId(req));
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
     const durationMs = Date.now() - startedAt;
