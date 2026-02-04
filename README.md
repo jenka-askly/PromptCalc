@@ -32,6 +32,25 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
   - If you see “API version not supported”, ensure `--skipApiVersionCheck` is used.
 - Optional smoke test: `pwsh scripts/dev-smoke.ps1` (requires the API host running).
 
+## Authentication (Easy Auth)
+- Production runs with Azure App Service Authentication / Static Web Apps Easy Auth using Microsoft identity.
+- Enable Easy Auth in Azure (high-level):
+  - Turn on App Service Authentication (or SWA auth) with Microsoft as the identity provider.
+  - Require authentication for API endpoints; `/api/health` remains anonymous for diagnostics.
+  - Configure redirect URIs and allowed tenant(s) in Entra ID.
+- Local dev options:
+  - Set `DEV_USER_ID` to bypass auth for local testing.
+  - For Easy Auth header simulation, set `PROMPTCALC_ACCEPT_FAKE_EASYAUTH=true` and send
+    `X-PROMPTCALC-FAKE-PRINCIPAL-ID` to the API.
+- User IDs are stored as stable, hashed identifiers:
+  - `userId = "u_" + base64url(sha256(principalId))` to avoid persisting raw principal IDs.
+
+## Required app settings (API)
+- `PROMPTCALC_STORAGE_CONNECTION`
+- `PROMPTCALC_TABLE_NAME`
+- `PROMPTCALC_CONTAINER`
+- Do not set `DEV_USER_ID` in production.
+
 ## Quick sanity check
 - Open the web app in your browser.
 - Click **Check health** to call `/api/health`.

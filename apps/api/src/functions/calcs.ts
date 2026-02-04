@@ -84,6 +84,18 @@ const jsonResponse = (
   },
 });
 
+const unauthorizedResponse = (traceId: string): HttpResponseInit =>
+  jsonResponse(traceId, 401, {
+    code: "UNAUTHORIZED",
+    traceId,
+  });
+
+const forbiddenResponse = (traceId: string): HttpResponseInit =>
+  jsonResponse(traceId, 403, {
+    code: "FORBIDDEN",
+    traceId,
+  });
+
 const storageErrorResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 500, {
     code: "STORAGE_TABLE_FAILED",
@@ -367,7 +379,8 @@ const saveCalc = async (
   const traceId = getTraceId(req.headers.get("traceparent"));
   const startedAt = Date.now();
   const op = "calcs.save";
-  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
+  const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
   logEvent({
@@ -378,8 +391,22 @@ const saveCalc = async (
     method: req.method,
     route: "/api/calcs/save",
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
+
+  if (!isAuthenticated && !isDevUser) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 401,
+    });
+    return unauthorizedResponse(traceId);
+  }
 
   const body = await parseRequestBody(req);
   if (!body || typeof body.artifactHtml !== "string" || !body.manifest) {
@@ -530,7 +557,8 @@ const listCalcs = async (
   const traceId = getTraceId(req.headers.get("traceparent"));
   const startedAt = Date.now();
   const op = "calcs.list";
-  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
+  const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
   logEvent({
@@ -541,8 +569,21 @@ const listCalcs = async (
     method: req.method,
     route: "/api/calcs",
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
+  if (!isAuthenticated && !isDevUser) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 401,
+    });
+    return unauthorizedResponse(traceId);
+  }
   const partitionKey = buildCalcPartition(userId);
   const tableClient = await getTableClient(traceId);
   const items: CalculatorSummary[] = [];
@@ -602,7 +643,8 @@ const getCalc = async (
   const startedAt = Date.now();
   const op = "calcs.get";
   const calcId = req.params.calcId as string;
-  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
+  const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
   logEvent({
@@ -614,8 +656,22 @@ const getCalc = async (
     route: "/api/calcs/{calcId}",
     calcId,
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
+  if (!isAuthenticated && !isDevUser) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 401,
+      calcId,
+    });
+    return unauthorizedResponse(traceId);
+  }
   const tableClient = await getTableClient(traceId);
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
@@ -633,6 +689,19 @@ const getCalc = async (
       code: "NOT_FOUND",
       message: "Calculator not found.",
     });
+  }
+  if (calculator.userId !== userId) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 403,
+      calcId,
+    });
+    return forbiddenResponse(traceId);
   }
 
   const versions: CalculatorDetail["versions"] = [];
@@ -703,7 +772,8 @@ const getVersion = async (
   const op = "calcs.version.get";
   const calcId = req.params.calcId as string;
   const versionId = req.params.versionId as string;
-  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
+  const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
   logEvent({
@@ -716,8 +786,23 @@ const getVersion = async (
     calcId,
     versionId,
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
+  if (!isAuthenticated && !isDevUser) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 401,
+      calcId,
+      versionId,
+    });
+    return unauthorizedResponse(traceId);
+  }
   const tableClient = await getTableClient(traceId);
   let versionEntity: CalculatorVersionEntity | null = null;
 
@@ -761,6 +846,20 @@ const getVersion = async (
       code: "NOT_FOUND",
       message: "Calculator version not found.",
     });
+  }
+  if (versionEntity.userId !== userId) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 403,
+      calcId,
+      versionId,
+    });
+    return forbiddenResponse(traceId);
   }
 
   const containerClient = await getContainerClient(traceId);
@@ -805,7 +904,8 @@ const promoteVersion = async (
   const op = "calcs.version.promote";
   const calcId = req.params.calcId as string;
   const versionId = req.params.versionId as string;
-  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
+  const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
   logEvent({
@@ -818,8 +918,23 @@ const promoteVersion = async (
     calcId,
     versionId,
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
+  if (!isAuthenticated && !isDevUser) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 401,
+      calcId,
+      versionId,
+    });
+    return unauthorizedResponse(traceId);
+  }
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
     const durationMs = Date.now() - startedAt;
@@ -837,6 +952,20 @@ const promoteVersion = async (
       code: "NOT_FOUND",
       message: "Calculator not found.",
     });
+  }
+  if (calculator.userId !== userId) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 403,
+      calcId,
+      versionId,
+    });
+    return forbiddenResponse(traceId);
   }
 
   const tableClient = await getTableClient(traceId);
@@ -881,6 +1010,20 @@ const promoteVersion = async (
       code: "NOT_FOUND",
       message: "Calculator version not found.",
     });
+  }
+  if (versionEntity.userId !== userId) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 403,
+      calcId,
+      versionId,
+    });
+    return forbiddenResponse(traceId);
   }
 
   const nowIso = new Date().toISOString();
@@ -935,7 +1078,8 @@ const deleteCalc = async (
   const startedAt = Date.now();
   const op = "calcs.delete";
   const calcId = req.params.calcId as string;
-  const { userId: requestUserId, isDevUser } = getUserContext(req);
+  const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
+  const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
 
   logEvent({
@@ -947,8 +1091,22 @@ const deleteCalc = async (
     route: "/api/calcs/{calcId}",
     calcId,
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
+  if (!isAuthenticated && !isDevUser) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 401,
+      calcId,
+    });
+    return unauthorizedResponse(traceId);
+  }
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
     const durationMs = Date.now() - startedAt;
@@ -965,6 +1123,19 @@ const deleteCalc = async (
       code: "NOT_FOUND",
       message: "Calculator not found.",
     });
+  }
+  if (calculator.userId !== userId) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 403,
+      calcId,
+    });
+    return forbiddenResponse(traceId);
   }
   const blobPath = getBlobPath(userId, calcId, "ignored");
 

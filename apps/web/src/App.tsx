@@ -15,6 +15,11 @@ interface HealthResponse {
   service: string;
   build: string;
   traceId: string;
+  auth?: {
+    isAuthenticated: boolean;
+    identityProvider?: string;
+    userId?: string;
+  };
 }
 
 interface SaveCalcResponse {
@@ -36,6 +41,12 @@ interface CalculatorVersionResponse {
   artifactHtml: string;
 }
 
+type AuthState =
+  | { mode: "unknown" }
+  | { mode: "dev"; userId: string }
+  | { mode: "signed-in" }
+  | { mode: "signed-out" };
+
 const App = () => {
   const [status, setStatus] = useState<HealthResponse | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
@@ -51,6 +62,7 @@ const App = () => {
   const [loadingCalcs, setLoadingCalcs] = useState(false);
   const [activeCalcId, setActiveCalcId] = useState<string | null>(null);
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+  const [authState, setAuthState] = useState<AuthState>({ mode: "unknown" });
 
   const sampleArtifactHtml = useMemo(
     () => (sample === "good" ? GOOD_CALC_HTML : BAD_CALC_HTML),
@@ -79,6 +91,31 @@ const App = () => {
     }
   }, [artifactSource, sampleArtifactHtml]);
 
+  const resolveAuthState = (health: HealthResponse) => {
+    if (health.auth?.identityProvider === "dev") {
+      setAuthState({
+        mode: "dev",
+        userId: health.auth.userId ?? "dev-user",
+      });
+      return;
+    }
+    if (health.auth?.isAuthenticated) {
+      setAuthState({ mode: "signed-in" });
+      return;
+    }
+    setAuthState({ mode: "signed-out" });
+  };
+
+  const loadAuthState = async () => {
+    try {
+      const response = await fetch("/api/health");
+      const data = (await response.json()) as HealthResponse;
+      resolveAuthState(data);
+    } catch {
+      setAuthState({ mode: "signed-out" });
+    }
+  };
+
   const loadCalcs = async () => {
     setLoadingCalcs(true);
     setCalcsError(null);
@@ -99,6 +136,7 @@ const App = () => {
 
   useEffect(() => {
     void loadCalcs();
+    void loadAuthState();
   }, []);
 
   const checkHealth = async () => {
@@ -110,6 +148,7 @@ const App = () => {
 
       setStatus(data);
       setTraceId(headerTrace || data.traceId);
+      resolveAuthState(data);
 
       console.info("Health check traceId:", headerTrace || data.traceId);
     } catch (err) {
@@ -172,10 +211,42 @@ const App = () => {
     }
   };
 
+  const handleSignIn = () => {
+    window.location.assign("/.auth/login/aad");
+  };
+
+  const handleSignOut = () => {
+    window.location.assign("/.auth/logout?post_logout_redirect_uri=/");
+  };
+
   return (
     <div className="app">
       <header>
         <h1>PromptCalc</h1>
+        <div className="auth">
+          {authState.mode === "dev" && (
+            <span className="auth-status">Dev mode user: {authState.userId}</span>
+          )}
+          {authState.mode === "signed-in" && (
+            <>
+              <span className="auth-status">Signed in</span>
+              <button type="button" onClick={handleSignOut}>
+                Sign out
+              </button>
+            </>
+          )}
+          {authState.mode === "signed-out" && (
+            <>
+              <span className="auth-status">Signed out</span>
+              <button type="button" onClick={handleSignIn}>
+                Sign in
+              </button>
+            </>
+          )}
+          {authState.mode === "unknown" && (
+            <span className="auth-status">Checking auth...</span>
+          )}
+        </div>
       </header>
       <section className="panel">
         <h2>Calculator viewer</h2>
