@@ -1,0 +1,16 @@
+{
+  "_fileHeader": {
+    "purpose": "Document the expected local Azure Functions settings for PromptCalc persistence.",
+    "persists": "None.",
+    "securityRisks": "Contains example development configuration values; do not store secrets in repo."
+  },
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "PROMPTCALC_STORAGE_CONNECTION": "UseDevelopmentStorage=true",
+    "PROMPTCALC_TABLE_NAME": "PromptCalcMeta",
+    "PROMPTCALC_CONTAINER": "promptcalc",
+    "DEV_USER_ID": "dev-user"
+  }
+}
