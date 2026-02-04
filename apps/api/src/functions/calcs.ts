@@ -63,8 +63,8 @@ type CalculatorVersionEntity = {
   versionId: string;
   userId: string;
   createdAt: string;
-  updatedAt: string;
   prompt?: string;
+  promptLen?: number;
   status: "ok" | "refused" | "quarantined";
   manifestBlobPath: string;
   artifactBlobPath: string;
@@ -86,55 +86,19 @@ const jsonResponse = (
 
 const storageErrorResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 500, {
-    code: "STORAGE_ERROR",
-    message: "Storage error.",
+    code: "STORAGE_TABLE_FAILED",
+    traceId,
   });
 
-const buildCalcPartition = (userId: string) => `USER#${userId}`;
-const buildCalcRow = (calcId: string) => `CALC#${calcId}`;
+const sanitizeId = (value: string) => value.replace(/[\\/]/g, "_");
+const normalizeId = (value: string | undefined): string => sanitizeId(String(value ?? ""));
+
+const buildCalcPartition = (userId: string) => `USER#${sanitizeId(userId)}`;
+const buildCalcRow = (calcId: string) => `CALC#${sanitizeId(calcId)}`;
 const buildVersionPartition = (userId: string, calcId: string) =>
-  `USER#${userId}#CALC#${calcId}`;
-const buildVersionRow = (versionId: string) => `VER#${versionId}`;
+  `USER#${sanitizeId(userId)}#CALC#${sanitizeId(calcId)}`;
+const buildVersionRow = (versionId: string) => `VER#${sanitizeId(versionId)}`;
 
-const isTablePrimitive = (value: unknown): value is string | number | boolean | Date =>
-  typeof value === "string" ||
-  typeof value === "number" ||
-  typeof value === "boolean" ||
-  value instanceof Date;
-
-const safeStringify = (value: unknown): string => {
-  try {
-    const serialized = JSON.stringify(value);
-    return typeof serialized === "string" ? serialized : String(value);
-  } catch {
-    return String(value);
-  }
-};
-
-const sanitizeTableEntity = <T extends Record<string, unknown>>(
-  entity: T,
-  options: { stringifyKeys?: string[] } = {}
-): T => {
-  const stringifyKeys = new Set(options.stringifyKeys ?? []);
-  const sanitized: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(entity)) {
-    if (value === undefined) {
-      continue;
-    }
-
-    if (isTablePrimitive(value)) {
-      sanitized[key] = value;
-      continue;
-    }
-
-    if (stringifyKeys.has(key)) {
-      sanitized[key] = safeStringify(value);
-    }
-  }
-
-  return sanitized as T;
-};
 
 const logTableError = (
   traceId: string,
@@ -199,10 +163,9 @@ const persistCalculatorEntity = async (
   entity: CalculatorEntity
 ): Promise<void> => {
   const tableClient = await getTableClient(traceId);
-  const sanitized = sanitizeTableEntity(entity);
 
   try {
-    await tableClient.upsertEntity(sanitized, "Merge");
+    await tableClient.upsertEntity(entity, "Merge");
   } catch (error) {
     logTableError(traceId, error, "calculator.upsert.failed");
     throw error;
@@ -222,10 +185,9 @@ const persistCalculatorVersionEntity = async (
   entity: CalculatorVersionEntity
 ): Promise<void> => {
   const tableClient = await getTableClient(traceId);
-  const sanitized = sanitizeTableEntity(entity, { stringifyKeys: ["prompt"] });
 
   try {
-    await tableClient.upsertEntity(sanitized, "Merge");
+    await tableClient.upsertEntity(entity, "Replace");
   } catch (error) {
     logTableError(traceId, error, "version.upsert.failed");
     throw error;
@@ -353,9 +315,17 @@ const loadCalculatorEntity = async (
     return (await tableClient.getEntity<CalculatorEntity>(partitionKey, rowKey)) ?? null;
   } catch (error) {
     const code = error && typeof error === "object" ? (error as { code?: string }).code : null;
-    if (code !== "ResourceNotFound") {
-      logTableError(traceId, error, "calculator.load.failed");
+    if (code === "ResourceNotFound") {
+      logEvent({
+        level: "info",
+        op: "calcs.storage",
+        traceId,
+        event: "calculator.notFound",
+        calcId,
+      });
+      return null;
     }
+    logTableError(traceId, error, "calculator.load.failed");
     return null;
   }
 };
@@ -430,12 +400,13 @@ const saveCalc = async (
     });
   }
 
-  const userId = getUserId(req);
-  const calcId = body.calcId || randomUUID();
-  const versionId = randomUUID();
+  const userId = normalizeId(getUserId(req));
+  const calcId = normalizeId(body.calcId || randomUUID());
+  const versionId = normalizeId(randomUUID());
   const nowIso = new Date().toISOString();
   const artifactHash = createHash("sha256").update(body.artifactHtml, "utf8").digest("hex");
-  const promptLen = typeof body.prompt === "string" ? body.prompt.length : undefined;
+  const promptValue = typeof body.prompt === "string" ? body.prompt : undefined;
+  const promptLen = promptValue ? promptValue.length : 0;
   const blobPath = getBlobPath(userId, calcId, versionId);
 
   let calculatorEntity = await loadCalculatorEntity(traceId, userId, calcId);
@@ -444,8 +415,8 @@ const saveCalc = async (
       partitionKey: buildCalcPartition(userId),
       rowKey: buildCalcRow(calcId),
       entityType: "Calculator",
-      calcId,
-      userId,
+      calcId: normalizeId(calcId),
+      userId: normalizeId(userId),
       title: body.title || (body.manifest.title as string) || "Untitled",
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -464,16 +435,16 @@ const saveCalc = async (
     partitionKey: buildVersionPartition(userId, calcId),
     rowKey: buildVersionRow(versionId),
     entityType: "CalculatorVersion",
-    calcId,
-    versionId,
-    userId,
+    calcId: normalizeId(calcId),
+    versionId: normalizeId(versionId),
+    userId: normalizeId(userId),
     createdAt: nowIso,
-    updatedAt: nowIso,
-    prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+    promptLen,
     status: "ok",
     manifestBlobPath: blobPath.manifest,
     artifactBlobPath: blobPath.artifact,
     artifactHash,
+    ...(promptValue ? { prompt: promptValue } : {}),
   };
 
   try {
@@ -536,7 +507,7 @@ const listCalcs = async (
     route: "/api/calcs",
   });
 
-  const userId = getUserId(req);
+  const userId = normalizeId(getUserId(req));
   const partitionKey = buildCalcPartition(userId);
   const tableClient = await getTableClient(traceId);
   const items: CalculatorSummary[] = [];
@@ -607,7 +578,7 @@ const getCalc = async (
     calcId,
   });
 
-  const userId = getUserId(req);
+  const userId = normalizeId(getUserId(req));
   const tableClient = await getTableClient(traceId);
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
@@ -707,7 +678,7 @@ const getVersion = async (
     versionId,
   });
 
-  const userId = getUserId(req);
+  const userId = normalizeId(getUserId(req));
   const tableClient = await getTableClient(traceId);
   let versionEntity: CalculatorVersionEntity | null = null;
 
@@ -807,7 +778,7 @@ const promoteVersion = async (
     versionId,
   });
 
-  const userId = getUserId(req);
+  const userId = normalizeId(getUserId(req));
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
     const durationMs = Date.now() - startedAt;
@@ -934,7 +905,7 @@ const deleteCalc = async (
     calcId,
   });
 
-  const userId = getUserId(req);
+  const userId = normalizeId(getUserId(req));
   const calculator = await loadCalculatorEntity(traceId, userId, calcId);
   if (!calculator) {
     const durationMs = Date.now() - startedAt;
