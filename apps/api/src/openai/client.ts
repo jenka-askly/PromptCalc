@@ -25,6 +25,10 @@ export type OpenAIRequest = {
   model?: string;
 };
 
+export type OpenAIRequestOptions = {
+  maxAttempts?: number;
+};
+
 export type OpenAIResponse = {
   id?: string;
   model?: string;
@@ -54,6 +58,18 @@ export class OpenAIBadRequestError extends Error {
   }
 }
 
+export class OpenAIParseError extends Error {
+  rawText: string;
+  attempt: number;
+
+  constructor(message: string, rawText: string, attempt: number) {
+    super(message);
+    this.name = "OpenAIParseError";
+    this.rawText = rawText;
+    this.attempt = attempt;
+  }
+}
+
 const extractOutputText = (payload: OpenAIResponse): string | null => {
   if (typeof payload.output_text === "string") {
     return payload.output_text;
@@ -76,6 +92,60 @@ const extractOutputText = (payload: OpenAIResponse): string | null => {
 const truncateMessage = (value: string, maxLength: number): string =>
   value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
 
+const extractFirstJsonObject = (value: string): string | null => {
+  const start = value.indexOf("{");
+  if (start === -1) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return value.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+};
+
+const parseJsonLenient = <T>(value: string): T => {
+  const trimmed = value.trim();
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch (error) {
+    const candidate = extractFirstJsonObject(trimmed);
+    if (!candidate) {
+      throw error;
+    }
+    return JSON.parse(candidate) as T;
+  }
+};
+
 const extractErrorMessage = (payload: OpenAIResponse): string | undefined => {
   const message = payload.error?.message;
   if (typeof message !== "string") {
@@ -88,7 +158,8 @@ export const callOpenAIResponses = async <T>(
   traceId: string,
   config: OpenAIClientConfig,
   requestBody: OpenAIRequest,
-  op: string
+  op: string,
+  options: OpenAIRequestOptions = {}
 ): Promise<{ parsed: T; raw: OpenAIResponse }> => {
   const baseUrl = config.baseUrl.endsWith("/") ? config.baseUrl : `${config.baseUrl}/`;
   const url = new URL("responses", baseUrl).toString();
@@ -99,7 +170,7 @@ export const callOpenAIResponses = async <T>(
   };
   const body = JSON.stringify(requestPayload);
 
-  const maxAttempts = 3;
+  const maxAttempts = options.maxAttempts ?? 3;
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -170,10 +241,26 @@ export const callOpenAIResponses = async <T>(
         lastError = new Error("OpenAI response missing output text");
         shouldRetry = true;
       } else {
-        return {
-          parsed: JSON.parse(outputText) as T,
-          raw: payload,
-        };
+        try {
+          return {
+            parsed: parseJsonLenient<T>(outputText),
+            raw: payload,
+          };
+        } catch (error) {
+          const snippet = truncateMessage(outputText, 200);
+          const message = `JSON parse failed. outputSnippet=${snippet}`;
+          logEvent({
+            level: "warn",
+            op,
+            traceId,
+            event: "openai.responses.parse_failed",
+            attempt,
+            message: error instanceof Error ? error.message : "JSON parse failed",
+            outputSample: truncateMessage(outputText, 120),
+          });
+          lastError = new OpenAIParseError(message, outputText, attempt);
+          shouldRetry = true;
+        }
       }
     } catch (error) {
       if (error instanceof OpenAIBadRequestError) {

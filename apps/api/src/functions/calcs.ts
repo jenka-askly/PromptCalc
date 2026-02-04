@@ -23,7 +23,7 @@ import {
   buildGenerateRefusedResponse,
   type RefusalReason,
 } from "../generation/response";
-import { callOpenAIResponses, OpenAIBadRequestError } from "../openai/client";
+import { callOpenAIResponses, OpenAIBadRequestError, OpenAIParseError } from "../openai/client";
 import { getPromptCalcPolicy } from "../policy/policy";
 import { scanArtifactHtml } from "../policy/scanner";
 import { getTraceId } from "../trace";
@@ -811,31 +811,41 @@ const generateCalc = async (
     return buildRefusalResponse(traceId, 200, reason);
   }
 
-  let generationResult: ArtifactGenerationResponse;
+  const generationSystem = [
+    "You generate a single-file offline calculator HTML artifact for PromptCalc.",
+    "Rules:",
+    "- Output must be a single HTML file and a manifest JSON object.",
+    "- Output MUST be a single JSON object with no markdown, code fences, or commentary.",
+    "- If you cannot comply, output exactly: {\"error\":\"REFUSE\"}.",
+    "- Include a CSP meta tag with: default-src 'none'; connect-src 'none'; img-src 'none';",
+    "  script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'.",
+    "- No external scripts, links, fonts, images, iframes, or network requests.",
+    "- No popups or navigation changes.",
+    "- Include this banner text in the body: \"Generated calculator (offline). Do not enter passwords.\"",
+    "- Embed the manifest JSON in the HTML inside:",
+    "  <script type=\"application/json\" id=\"promptcalc-manifest\">...</script>.",
+    "- The manifest capabilities.network must be false.",
+    "- Do not refuse; classifier already handled refusals.",
+    "Return JSON that exactly matches the schema.",
+    "JSON schema example:",
+    "{\"artifactHtml\":\"<!doctype html>...\",\"manifest\":{\"specVersion\":\"1.0\",\"title\":\"...\",\"executionModel\":\"static\",\"capabilities\":{\"network\":false}}}",
+  ].join("\\n");
+
+  const generationUser = [
+    "Prompt:",
+    prompt,
+    "",
+    "If you need a title, use a short descriptive one.",
+  ].join("\\n");
+
+  const repairUser = [
+    "You returned invalid JSON. Return ONLY valid JSON for this schema. No extra text.",
+    "Prompt:",
+    prompt,
+  ].join("\\n");
+
+  let generationResult: ArtifactGenerationResponse | null = null;
   try {
-    const generationSystem = [
-      "You generate a single-file offline calculator HTML artifact for PromptCalc.",
-      "Rules:",
-      "- Output must be a single HTML file and a manifest JSON object.",
-      "- Include a CSP meta tag with: default-src 'none'; connect-src 'none'; img-src 'none';",
-      "  script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'.",
-      "- No external scripts, links, fonts, images, iframes, or network requests.",
-      "- No popups or navigation changes.",
-      "- Include this banner text in the body: \"Generated calculator (offline). Do not enter passwords.\"",
-      "- Embed the manifest JSON in the HTML inside:",
-      "  <script type=\"application/json\" id=\"promptcalc-manifest\">...</script>.",
-      "- The manifest capabilities.network must be false.",
-      "- Do not refuse; classifier already handled refusals.",
-      "Return JSON that exactly matches the schema.",
-    ].join("\\n");
-
-    const generationUser = [
-      "Prompt:",
-      prompt,
-      "",
-      "If you need a title, use a short descriptive one.",
-    ].join("\\n");
-
     const generationResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
       traceId,
       openAIConfig,
@@ -845,27 +855,63 @@ const generateCalc = async (
           { role: "user", content: [{ type: "input_text", text: generationUser }] },
         ],
       },
-      "openai.artifact.generate"
+      "openai.artifact.generate",
+      { maxAttempts: 2 }
     );
 
     generationResult = generationResponse.parsed;
   } catch (error) {
-    if (error instanceof OpenAIBadRequestError) {
+    if (error instanceof OpenAIParseError) {
+      try {
+        const repairResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
+          traceId,
+          openAIConfig,
+          {
+            input: [
+              { role: "system", content: [{ type: "input_text", text: generationSystem }] },
+              { role: "user", content: [{ type: "input_text", text: repairUser }] },
+            ],
+          },
+          "openai.artifact.generate.repair",
+          { maxAttempts: 1 }
+        );
+        generationResult = repairResponse.parsed;
+      } catch (repairError) {
+        if (repairError instanceof OpenAIBadRequestError) {
+          return buildOpenAIBadRequestResponse(traceId, 502);
+        }
+        const reason = buildRefusalReason(
+          "OPENAI_ERROR",
+          "Artifact generation failed.",
+          "Try a simpler offline calculator prompt."
+        );
+        logEvent({
+          level: "error",
+          op,
+          traceId,
+          event: "artifact.generate.failed",
+          message: repairError instanceof Error ? repairError.message : "unknown error",
+        });
+        return buildRefusalResponse(traceId, 502, reason);
+      }
+    } else if (error instanceof OpenAIBadRequestError) {
       return buildOpenAIBadRequestResponse(traceId, 502);
     }
-    const reason = buildRefusalReason(
-      "OPENAI_ERROR",
-      "Artifact generation failed.",
-      "Try a simpler offline calculator prompt."
-    );
-    logEvent({
-      level: "error",
-      op,
-      traceId,
-      event: "artifact.generate.failed",
-      message: error instanceof Error ? error.message : "unknown error",
-    });
-    return buildRefusalResponse(traceId, 502, reason);
+    if (!(error instanceof OpenAIParseError)) {
+      const reason = buildRefusalReason(
+        "OPENAI_ERROR",
+        "Artifact generation failed.",
+        "Try a simpler offline calculator prompt."
+      );
+      logEvent({
+        level: "error",
+        op,
+        traceId,
+        event: "artifact.generate.failed",
+        message: error instanceof Error ? error.message : "unknown error",
+      });
+      return buildRefusalResponse(traceId, 502, reason);
+    }
   }
 
   if (
@@ -875,8 +921,47 @@ const generateCalc = async (
     typeof generationResult.manifest !== "object"
   ) {
     const reason = buildRefusalReason(
-      "OPENAI_ERROR",
-      "Artifact generation returned invalid data.",
+      "INVALID_MODEL_OUTPUT",
+      `Artifact generation returned invalid data. traceId=${traceId}`,
+      "Try a simpler offline calculator prompt."
+    );
+    return buildRefusalResponse(traceId, 502, reason);
+  }
+
+  if (
+    "error" in generationResult &&
+    (generationResult as { error?: unknown }).error === "REFUSE"
+  ) {
+    const reason = buildRefusalReason(
+      "MODEL_REFUSED",
+      `Artifact generation refused. traceId=${traceId}`,
+      "Try a simpler offline calculator prompt."
+    );
+    return buildRefusalResponse(traceId, 200, reason);
+  }
+
+  const artifactBytes = Buffer.byteLength(generationResult.artifactHtml, "utf8");
+  if (artifactBytes > config.maxArtifactBytes) {
+    const reason = buildRefusalReason(
+      "TOO_LARGE_ARTIFACT",
+      "Generated artifact exceeds size limits.",
+      "Request a smaller, simpler calculator layout."
+    );
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "artifact.tooLarge",
+      artifactBytes,
+      maxArtifactBytes: config.maxArtifactBytes,
+    });
+    return buildRefusalResponse(traceId, 200, reason);
+  }
+
+  if (!isValidManifest(generationResult.manifest)) {
+    const reason = buildRefusalReason(
+      "INVALID_MODEL_OUTPUT",
+      `Artifact manifest missing required fields. traceId=${traceId}`,
       "Try a simpler offline calculator prompt."
     );
     return buildRefusalResponse(traceId, 502, reason);
@@ -892,8 +977,8 @@ const generateCalc = async (
   const finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
   const finalHtml = embedManifestInHtml(generationResult.artifactHtml, finalManifest);
 
-  const artifactBytes = Buffer.byteLength(finalHtml, "utf8");
-  if (artifactBytes > config.maxArtifactBytes) {
+  const finalArtifactBytes = Buffer.byteLength(finalHtml, "utf8");
+  if (finalArtifactBytes > config.maxArtifactBytes) {
     const reason = buildRefusalReason(
       "TOO_LARGE_ARTIFACT",
       "Generated artifact exceeds size limits.",
@@ -904,7 +989,7 @@ const generateCalc = async (
       op,
       traceId,
       event: "artifact.tooLarge",
-      artifactBytes,
+      artifactBytes: finalArtifactBytes,
       maxArtifactBytes: config.maxArtifactBytes,
     });
     return buildRefusalResponse(traceId, 200, reason);
@@ -933,7 +1018,7 @@ const generateCalc = async (
     op,
     traceId,
     event: "artifact.scan.passed",
-    artifactBytes,
+    artifactBytes: finalArtifactBytes,
   });
 
   try {
