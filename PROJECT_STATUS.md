@@ -33,14 +33,15 @@ Step 5 — End-to-end prototype validation (per README).
 - The API supports generating calculators and managing versions for saved calculators.
 
 ## Open Issues
+- AI_SCAN_FAILED: AI scan refuses "Simple standard calculator" generation; review AI scan issue summaries after recent logging update.
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
 - DISALLOWED_PATTERN refusals when model output includes `new Function` for a standard calculator.
 - OpenAI Responses schema strictness (text.format) causes retries; currently falling back to `json_object`.
 
 ## Next Tasks (Top 3)
-1. Implement two execution modes (form vs expression) with a safe evaluator for standard calculator prompts.
-2. Improve stability tests for iframe watchdog timing and load behavior.
-3. Tighten OpenAI Responses schema handling to reduce fallback reliance.
+1. Adjust generation prompt or AI scan policy based on newly surfaced AI scan issue summaries for standard calculators.
+2. Implement two execution modes (form vs expression) with a safe evaluator for standard calculator prompts.
+3. Improve stability tests for iframe watchdog timing and load behavior.
 
 ## Non-Negotiable Invariants
 - Calculators are offline and sandboxed; no network or external dependencies.

@@ -42,4 +42,5 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:7071/api/calcs/$calcId/vers
 ## Known issues
 - WATCHDOG_TIMEOUT: artifact failed to signal readiness within the watchdog window.
 - DISALLOWED_PATTERN: policy scanner found a banned construct (often `new Function`).
+- AI_SCAN_FAILED: AI artifact scan refused the generated HTML; inspect `artifact.aiScan.failed` log events for issue summaries.
 - OpenAI 400 schema errors: Responses API rejected `text.format` schema; current fallback is `json_object`.

@@ -23,6 +23,11 @@ import {
 } from "../generation/executionModel";
 import { resolveGenerationGate } from "../generation/gate";
 import {
+  formatAiScanIssueSummary,
+  stringifyAiScanIssueSummaries,
+  summarizeAiScanIssues,
+} from "../generation/aiScan";
+import {
   buildGenerateOkResponse,
   buildGenerateRefusedResponse,
   type RefusalReason,
@@ -69,9 +74,9 @@ interface ArtifactGenerationResponse {
 
 interface CodeScanDecision {
   isSafe?: boolean;
-  issues?: string[];
+  issues?: unknown[];
   safe?: boolean;
-  findings?: string[];
+  findings?: unknown[];
 }
 
 interface CalculatorSummary {
@@ -299,13 +304,24 @@ const buildRefusalReason = (
   code: RefusalCode | string,
   message: string,
   safeAlternative: string,
-  details?: Pick<RefusalReason, "matchIndex" | "contextSnippet">
+  details?: Pick<RefusalReason, "matchIndex" | "contextSnippet" | "details">
 ): RefusalReason => ({
   code,
   message,
   safeAlternative,
   ...details,
 });
+
+const buildAiScanIssueLogPayload = (issues: unknown[]) => {
+  const summaries = summarizeAiScanIssues(issues);
+  const summaryLines = summaries.map(formatAiScanIssueSummary);
+  return {
+    count: summaries.length,
+    summaries,
+    summaryLines,
+    summaryJson: stringifyAiScanIssueSummaries(summaries, 4096),
+  };
+};
 
 const buildRefusalResponse = (
   traceId: string,
@@ -1385,27 +1401,34 @@ const generateCalc = async (
     const isSafe = parsedDecision.isSafe ?? parsedDecision.safe;
 
     if (parsedIssues.length > 0) {
+      const issueLog = buildAiScanIssueLogPayload(parsedIssues);
       const reason = buildRefusalReason(
         "AI_SCAN_FAILED",
-        listToString(parsedIssues) || "AI code scan flagged the artifact.",
-        "Use a smaller, simpler offline calculator prompt."
+        "AI code scan flagged the artifact. Review the issues below.",
+        "Use a smaller, simpler offline calculator prompt.",
+        { details: issueLog.summaries }
       );
       logEvent({
         level: "warn",
         op,
         traceId,
         event: "artifact.aiScan.failed",
-        findings: listToString(parsedIssues),
+        issuesCount: issueLog.count,
+        issues: issueLog.summaryJson,
+        issueSummaryLines: issueLog.summaryLines,
       });
       return buildRefusalResponse(traceId, 200, reason);
     }
     if (isSafe === false) {
+      const issueLog = buildAiScanIssueLogPayload(parsedIssues);
       logEvent({
         level: "warn",
         op,
         traceId,
         event: "artifact.aiScan.anomaly",
-        findings: listToString(parsedIssues),
+        issuesCount: issueLog.count,
+        issues: issueLog.summaryJson,
+        issueSummaryLines: issueLog.summaryLines,
       });
     }
   } catch (error) {

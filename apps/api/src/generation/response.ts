@@ -6,12 +6,15 @@
 
 import type { RefusalCode } from "@promptcalc/types";
 
+import type { AiScanIssueSummary } from "./aiScan";
+
 export type RefusalReason = {
   code: RefusalCode | string;
   message: string;
   safeAlternative: string;
   matchIndex?: number;
   contextSnippet?: string;
+  details?: AiScanIssueSummary[];
 };
 
 export type GenerateOkResponse = {
