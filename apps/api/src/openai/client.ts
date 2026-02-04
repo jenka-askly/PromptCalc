@@ -21,7 +21,6 @@ export type OpenAIInputContent = {
 
 export type OpenAIRequest = {
   input: Array<{ role: "system" | "user"; content: OpenAIInputContent[] }>;
-  response_format: unknown;
   max_output_tokens?: number;
   model?: string;
 };
@@ -29,6 +28,7 @@ export type OpenAIRequest = {
 export type OpenAIResponse = {
   id?: string;
   model?: string;
+  error?: { message?: string };
   output?: Array<{
     content?: Array<{ type?: string; text?: string } | { type?: string; value?: string }>;
   }>;
@@ -73,6 +73,17 @@ const extractOutputText = (payload: OpenAIResponse): string | null => {
   return null;
 };
 
+const truncateMessage = (value: string, maxLength: number): string =>
+  value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+
+const extractErrorMessage = (payload: OpenAIResponse): string | undefined => {
+  const message = payload.error?.message;
+  if (typeof message !== "string") {
+    return undefined;
+  }
+  return truncateMessage(message, 200);
+};
+
 export const callOpenAIResponses = async <T>(
   traceId: string,
   config: OpenAIClientConfig,
@@ -84,7 +95,6 @@ export const callOpenAIResponses = async <T>(
   const requestPayload = {
     model: requestBody.model ?? config.model,
     input: requestBody.input,
-    response_format: requestBody.response_format,
     max_output_tokens: requestBody.max_output_tokens ?? config.maxTokens,
   };
   const body = JSON.stringify(requestPayload);
@@ -134,6 +144,7 @@ export const callOpenAIResponses = async <T>(
 
       if (!response.ok) {
         if (response.status === 400) {
+          const errorMessage = extractErrorMessage(payload);
           logEvent({
             level: "warn",
             op,
@@ -142,6 +153,7 @@ export const callOpenAIResponses = async <T>(
             status: response.status,
             model: payload.model ?? requestPayload.model,
             requestKeys: Object.keys(requestPayload),
+            errorMessage,
             inputKeys: requestPayload.input.map((item) => ({
               keys: Object.keys(item),
               contentKeys: item.content.map((content) => Object.keys(content)),

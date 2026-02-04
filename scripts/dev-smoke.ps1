@@ -1,5 +1,5 @@
 <#
-Purpose: Exercise PromptCalc persistence endpoints against a running local API host.
+Purpose: Exercise PromptCalc persistence and generation endpoints against a running local API host.
 Persists: Creates and deletes calculator metadata in PromptCalcMeta and blobs under users/<userId>/calcs/<calcId>/.
 Security Risks: Sends sample HTML/manifest content over HTTP to the local API.
 #>
@@ -47,6 +47,14 @@ Invoke-RestMethod -Method Get -Uri "$BaseUrl/calcs/$calcId/versions/$versionId" 
 
 Write-Host "Promoting version..."
 Invoke-RestMethod -Method Post -Uri "$BaseUrl/calcs/$calcId/versions/$versionId/promote" | ConvertTo-Json -Depth 5 | Write-Host
+
+Write-Host "Generating calculator..."
+$generateResponse = Invoke-RestMethod -Method Post -Uri "$BaseUrl/calcs/generate" -ContentType "application/json" -Body (
+  @{
+    prompt = "Simple tip calculator with bill + tip% + total."
+  } | ConvertTo-Json -Depth 5
+)
+$generateResponse | ConvertTo-Json -Depth 6 | Write-Host
 
 Write-Host "Deleting calculator..."
 Invoke-RestMethod -Method Delete -Uri "$BaseUrl/calcs/$calcId" | ConvertTo-Json -Depth 5 | Write-Host

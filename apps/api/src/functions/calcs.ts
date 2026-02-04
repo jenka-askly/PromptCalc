@@ -122,9 +122,15 @@ const jsonResponse = (
 const buildOpenAIBadRequestRefusal = (): RefusalReason =>
   buildRefusalReason(
     "OPENAI_BAD_REQUEST",
-    "OpenAI request invalid (400). Check server configuration.",
-    "Try again later or contact support."
+    "OpenAI request rejected",
+    "Try again after updating server config."
   );
+
+const buildOpenAIBadRequestResponse = (traceId: string, status: number): HttpResponseInit =>
+  jsonResponse(traceId, status, {
+    ...buildGenerateRefusedResponse(buildOpenAIBadRequestRefusal()),
+    traceId,
+  });
 
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 401, {
@@ -715,6 +721,19 @@ const generateCalc = async (
     return buildRefusalResponse(traceId, 200, gateReason);
   }
 
+  if (!config.apiKey || config.apiKey.trim().length === 0) {
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "openai.not_configured",
+    });
+    return jsonResponse(traceId, 500, {
+      code: "OPENAI_NOT_CONFIGURED",
+      traceId,
+    });
+  }
+
   const policy = await getPromptCalcPolicy();
   const openAIConfig = {
     apiKey: config.apiKey,
@@ -726,22 +745,6 @@ const generateCalc = async (
 
   let promptDecision: PromptScanDecision;
   try {
-    const promptScanSchema = {
-      name: "prompt_scan",
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["allowed", "reason", "safeAlternative"],
-        properties: {
-          allowed: { type: "boolean" },
-          refusalCode: { type: "string" },
-          reason: { type: "string" },
-          safeAlternative: { type: "string" },
-        },
-      },
-      strict: true,
-    };
-
     const promptScanSystem = [
       "You are a strict policy classifier for PromptCalc generation prompts.",
       "Disallow any intent that requests:",
@@ -765,7 +768,6 @@ const generateCalc = async (
           { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
           { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
         ],
-        response_format: { type: "json_schema", json_schema: promptScanSchema },
         max_output_tokens: 350,
       },
       "openai.prompt.scan"
@@ -774,7 +776,7 @@ const generateCalc = async (
     promptDecision = promptScanResult.parsed;
   } catch (error) {
     if (error instanceof OpenAIBadRequestError) {
-      return buildRefusalResponse(traceId, 502, buildOpenAIBadRequestRefusal());
+      return buildOpenAIBadRequestResponse(traceId, 502);
     }
     const reason = buildRefusalReason(
       "OPENAI_ERROR",
@@ -811,53 +813,6 @@ const generateCalc = async (
 
   let generationResult: ArtifactGenerationResponse;
   try {
-    const generationSchema = {
-      name: "artifact_generation",
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["artifactHtml", "manifest"],
-        properties: {
-          artifactHtml: { type: "string" },
-          manifest: {
-            type: "object",
-            additionalProperties: false,
-            required: [
-              "specVersion",
-              "title",
-              "description",
-              "executionModel",
-              "capabilities",
-              "inputs",
-              "outputs",
-              "limitations",
-              "safetyNotes",
-              "hash",
-            ],
-            properties: {
-              specVersion: { type: "string" },
-              title: { type: "string" },
-              description: { type: "string" },
-              executionModel: { type: "string" },
-              capabilities: {
-                type: "object",
-                additionalProperties: false,
-                properties: { network: { type: "boolean" } },
-                required: ["network"],
-              },
-              inputs: { type: "array", items: { type: "string" } },
-              outputs: { type: "array", items: { type: "string" } },
-              limitations: { type: "array", items: { type: "string" } },
-              safetyNotes: { type: "array", items: { type: "string" } },
-              hash: { type: "string" },
-            },
-          },
-          notes: { type: "string" },
-        },
-      },
-      strict: true,
-    };
-
     const generationSystem = [
       "You generate a single-file offline calculator HTML artifact for PromptCalc.",
       "Rules:",
@@ -889,7 +844,6 @@ const generateCalc = async (
           { role: "system", content: [{ type: "input_text", text: generationSystem }] },
           { role: "user", content: [{ type: "input_text", text: generationUser }] },
         ],
-        response_format: { type: "json_schema", json_schema: generationSchema },
       },
       "openai.artifact.generate"
     );
@@ -897,7 +851,7 @@ const generateCalc = async (
     generationResult = generationResponse.parsed;
   } catch (error) {
     if (error instanceof OpenAIBadRequestError) {
-      return buildRefusalResponse(traceId, 502, buildOpenAIBadRequestRefusal());
+      return buildOpenAIBadRequestResponse(traceId, 502);
     }
     const reason = buildRefusalReason(
       "OPENAI_ERROR",
@@ -983,20 +937,6 @@ const generateCalc = async (
   });
 
   try {
-    const codeScanSchema = {
-      name: "artifact_scan",
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["safe", "findings"],
-        properties: {
-          safe: { type: "boolean" },
-          findings: { type: "array", items: { type: "string" } },
-        },
-      },
-      strict: true,
-    };
-
     const codeScanSystem = [
       "Review the HTML and decide if it is safe for an offline, sandboxed calculator.",
       "Flag any signs of networking, external dependencies, credential capture, eval/dynamic code,",
@@ -1014,7 +954,6 @@ const generateCalc = async (
           { role: "system", content: [{ type: "input_text", text: codeScanSystem }] },
           { role: "user", content: [{ type: "input_text", text: codeScanUser }] },
         ],
-        response_format: { type: "json_schema", json_schema: codeScanSchema },
         max_output_tokens: 300,
       },
       "openai.artifact.scan"
@@ -1037,7 +976,7 @@ const generateCalc = async (
     }
   } catch (error) {
     if (error instanceof OpenAIBadRequestError) {
-      return buildRefusalResponse(traceId, 502, buildOpenAIBadRequestRefusal());
+      return buildOpenAIBadRequestResponse(traceId, 502);
     }
     const reason = buildRefusalReason(
       "OPENAI_ERROR",
