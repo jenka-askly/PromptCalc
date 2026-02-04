@@ -86,6 +86,16 @@ const App = () => {
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const artifactHash = useMemo(() => {
+    let hash = 0;
+    for (let i = 0; i < artifactHtml.length; i += 1) {
+      hash = (hash * 31 + artifactHtml.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash).toString(16);
+  }, [artifactHtml]);
+
+  const viewerKey = `${activeCalcId ?? "sample"}:${activeVersionId ?? "draft"}:${artifactHash}`;
+
   const sampleArtifactHtml = useMemo(
     () => (sample === "good" ? GOOD_CALC_HTML : BAD_CALC_HTML),
     [sample]
@@ -375,9 +385,7 @@ const App = () => {
           </button>
           {saveStatus && <span className="status">{saveStatus}</span>}
         </div>
-        <CalculatorViewer
-          artifactHtml={artifactHtml}
-        />
+        <CalculatorViewer key={viewerKey} artifactHtml={artifactHtml} />
       </section>
       <section className="panel">
         <h2>My calculators</h2>
