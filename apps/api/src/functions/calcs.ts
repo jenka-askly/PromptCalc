@@ -63,6 +63,7 @@ type CalculatorVersionEntity = {
   versionId: string;
   userId: string;
   createdAt: string;
+  updatedAt: string;
   prompt?: string;
   status: "ok" | "refused" | "quarantined";
   manifestBlobPath: string;
@@ -83,11 +84,79 @@ const jsonResponse = (
   },
 });
 
+const storageErrorResponse = (traceId: string): HttpResponseInit =>
+  jsonResponse(traceId, 500, {
+    code: "STORAGE_ERROR",
+    message: "Storage error.",
+  });
+
 const buildCalcPartition = (userId: string) => `USER#${userId}`;
 const buildCalcRow = (calcId: string) => `CALC#${calcId}`;
 const buildVersionPartition = (userId: string, calcId: string) =>
   `USER#${userId}#CALC#${calcId}`;
 const buildVersionRow = (versionId: string) => `VER#${versionId}`;
+
+const isTablePrimitive = (value: unknown): value is string | number | boolean | Date =>
+  typeof value === "string" ||
+  typeof value === "number" ||
+  typeof value === "boolean" ||
+  value instanceof Date;
+
+const safeStringify = (value: unknown): string => {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string" ? serialized : String(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const sanitizeTableEntity = <T extends Record<string, unknown>>(
+  entity: T,
+  options: { stringifyKeys?: string[] } = {}
+): T => {
+  const stringifyKeys = new Set(options.stringifyKeys ?? []);
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(entity)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    if (isTablePrimitive(value)) {
+      sanitized[key] = value;
+      continue;
+    }
+
+    if (stringifyKeys.has(key)) {
+      sanitized[key] = safeStringify(value);
+    }
+  }
+
+  return sanitized as T;
+};
+
+const logTableError = (
+  traceId: string,
+  error: unknown,
+  event: string,
+  op = "calcs.storage"
+): void => {
+  const errorCode =
+    error && typeof error === "object"
+      ? ((error as { code?: string; statusCode?: number }).code ??
+          String((error as { statusCode?: number }).statusCode ?? "unknown"))
+      : "unknown";
+
+  logEvent({
+    level: "error",
+    op,
+    traceId,
+    event,
+    errorCode,
+    message: "Table operation failed.",
+  });
+};
 
 const isValidManifest = (manifest: Record<string, unknown>): boolean => {
   const specVersion = manifest.specVersion;
@@ -130,7 +199,14 @@ const persistCalculatorEntity = async (
   entity: CalculatorEntity
 ): Promise<void> => {
   const tableClient = await getTableClient(traceId);
-  await tableClient.upsertEntity(entity, "Merge");
+  const sanitized = sanitizeTableEntity(entity);
+
+  try {
+    await tableClient.upsertEntity(sanitized, "Merge");
+  } catch (error) {
+    logTableError(traceId, error, "calculator.upsert.failed");
+    throw error;
+  }
 
   logEvent({
     level: "info",
@@ -146,7 +222,14 @@ const persistCalculatorVersionEntity = async (
   entity: CalculatorVersionEntity
 ): Promise<void> => {
   const tableClient = await getTableClient(traceId);
-  await tableClient.upsertEntity(entity, "Merge");
+  const sanitized = sanitizeTableEntity(entity, { stringifyKeys: ["prompt"] });
+
+  try {
+    await tableClient.upsertEntity(sanitized, "Merge");
+  } catch (error) {
+    logTableError(traceId, error, "version.upsert.failed");
+    throw error;
+  }
 
   logEvent({
     level: "info",
@@ -216,13 +299,18 @@ const deleteCalculatorEntities = async (
   const calcPartition = buildCalcPartition(userId);
   const versionPartition = buildVersionPartition(userId, calcId);
 
-  for await (const entity of tableClient.listEntities<CalculatorVersionEntity>({
-    queryOptions: { filter: `PartitionKey eq '${versionPartition}'` },
-  })) {
-    await tableClient.deleteEntity(entity.partitionKey, entity.rowKey);
-  }
+  try {
+    for await (const entity of tableClient.listEntities<CalculatorVersionEntity>({
+      queryOptions: { filter: `PartitionKey eq '${versionPartition}'` },
+    })) {
+      await tableClient.deleteEntity(entity.partitionKey, entity.rowKey);
+    }
 
-  await tableClient.deleteEntity(calcPartition, buildCalcRow(calcId));
+    await tableClient.deleteEntity(calcPartition, buildCalcRow(calcId));
+  } catch (error) {
+    logTableError(traceId, error, "calculator.delete.failed");
+    throw error;
+  }
 
   logEvent({
     level: "info",
@@ -263,7 +351,11 @@ const loadCalculatorEntity = async (
 
   try {
     return (await tableClient.getEntity<CalculatorEntity>(partitionKey, rowKey)) ?? null;
-  } catch {
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: string }).code : null;
+    if (code !== "ResourceNotFound") {
+      logTableError(traceId, error, "calculator.load.failed");
+    }
     return null;
   }
 };
@@ -376,6 +468,7 @@ const saveCalc = async (
     versionId,
     userId,
     createdAt: nowIso,
+    updatedAt: nowIso,
     prompt: typeof body.prompt === "string" ? body.prompt : undefined,
     status: "ok",
     manifestBlobPath: blobPath.manifest,
@@ -383,10 +476,23 @@ const saveCalc = async (
     artifactHash,
   };
 
-  await persistArtifactBlob(traceId, blobPath.artifact, body.artifactHtml);
-  await persistManifestBlob(traceId, blobPath.manifest, body.manifest);
-  await persistCalculatorVersionEntity(traceId, versionEntity);
-  await persistCalculatorEntity(traceId, calculatorEntity);
+  try {
+    await persistArtifactBlob(traceId, blobPath.artifact, body.artifactHtml);
+    await persistManifestBlob(traceId, blobPath.manifest, body.manifest);
+    await persistCalculatorVersionEntity(traceId, versionEntity);
+    await persistCalculatorEntity(traceId, calculatorEntity);
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 500,
+    });
+    return storageErrorResponse(traceId);
+  }
 
   const durationMs = Date.now() - startedAt;
   logEvent({
@@ -435,19 +541,33 @@ const listCalcs = async (
   const tableClient = await getTableClient(traceId);
   const items: CalculatorSummary[] = [];
 
-  for await (const entity of tableClient.listEntities<CalculatorEntity>({
-    queryOptions: { filter: `PartitionKey eq '${partitionKey}'` },
-  })) {
-    if (entity.entityType !== "Calculator") {
-      continue;
-    }
+  try {
+    for await (const entity of tableClient.listEntities<CalculatorEntity>({
+      queryOptions: { filter: `PartitionKey eq '${partitionKey}'` },
+    })) {
+      if (entity.entityType !== "Calculator") {
+        continue;
+      }
 
-    items.push({
-      calcId: entity.calcId,
-      title: entity.title,
-      updatedAt: entity.updatedAt,
-      currentVersionId: entity.currentVersionId,
+      items.push({
+        calcId: entity.calcId,
+        title: entity.title,
+        updatedAt: entity.updatedAt,
+        currentVersionId: entity.currentVersionId,
+      });
+    }
+  } catch (error) {
+    logTableError(traceId, error, "calculator.list.failed", op);
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 500,
     });
+    return storageErrorResponse(traceId);
   }
 
   items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -509,18 +629,33 @@ const getCalc = async (
 
   const versions: CalculatorDetail["versions"] = [];
   const partitionKey = buildVersionPartition(userId, calcId);
-  for await (const entity of tableClient.listEntities<CalculatorVersionEntity>({
-    queryOptions: { filter: `PartitionKey eq '${partitionKey}'` },
-  })) {
-    if (entity.entityType !== "CalculatorVersion") {
-      continue;
-    }
+  try {
+    for await (const entity of tableClient.listEntities<CalculatorVersionEntity>({
+      queryOptions: { filter: `PartitionKey eq '${partitionKey}'` },
+    })) {
+      if (entity.entityType !== "CalculatorVersion") {
+        continue;
+      }
 
-    versions.push({
-      versionId: entity.versionId,
-      createdAt: entity.createdAt,
-      status: entity.status,
+      versions.push({
+        versionId: entity.versionId,
+        createdAt: entity.createdAt,
+        status: entity.status,
+      });
+    }
+  } catch (error) {
+    logTableError(traceId, error, "version.list.failed", op);
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 500,
+      calcId,
     });
+    return storageErrorResponse(traceId);
   }
 
   versions.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -574,10 +709,31 @@ const getVersion = async (
 
   const userId = getUserId(req);
   const tableClient = await getTableClient(traceId);
-  const versionEntity = await tableClient.getEntity<CalculatorVersionEntity>(
-    buildVersionPartition(userId, calcId),
-    buildVersionRow(versionId)
-  ).catch(() => null);
+  let versionEntity: CalculatorVersionEntity | null = null;
+
+  try {
+    versionEntity = await tableClient.getEntity<CalculatorVersionEntity>(
+      buildVersionPartition(userId, calcId),
+      buildVersionRow(versionId)
+    );
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: string }).code : null;
+    if (code !== "ResourceNotFound") {
+      logTableError(traceId, error, "version.load.failed", op);
+      const durationMs = Date.now() - startedAt;
+      logEvent({
+        level: "error",
+        op,
+        traceId,
+        event: "request.end",
+        durationMs,
+        status: 500,
+        calcId,
+        versionId,
+      });
+      return storageErrorResponse(traceId);
+    }
+  }
 
   if (!versionEntity) {
     const durationMs = Date.now() - startedAt;
@@ -672,10 +828,31 @@ const promoteVersion = async (
   }
 
   const tableClient = await getTableClient(traceId);
-  const versionEntity = await tableClient.getEntity<CalculatorVersionEntity>(
-    buildVersionPartition(userId, calcId),
-    buildVersionRow(versionId)
-  ).catch(() => null);
+  let versionEntity: CalculatorVersionEntity | null = null;
+
+  try {
+    versionEntity = await tableClient.getEntity<CalculatorVersionEntity>(
+      buildVersionPartition(userId, calcId),
+      buildVersionRow(versionId)
+    );
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: string }).code : null;
+    if (code !== "ResourceNotFound") {
+      logTableError(traceId, error, "version.load.failed", op);
+      const durationMs = Date.now() - startedAt;
+      logEvent({
+        level: "error",
+        op,
+        traceId,
+        event: "request.end",
+        durationMs,
+        status: 500,
+        calcId,
+        versionId,
+      });
+      return storageErrorResponse(traceId);
+    }
+  }
   if (!versionEntity) {
     const durationMs = Date.now() - startedAt;
     logEvent({
@@ -701,7 +878,22 @@ const promoteVersion = async (
     currentVersionId: versionId,
   };
 
-  await persistCalculatorEntity(traceId, updated);
+  try {
+    await persistCalculatorEntity(traceId, updated);
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 500,
+      calcId,
+      versionId,
+    });
+    return storageErrorResponse(traceId);
+  }
 
   const durationMs = Date.now() - startedAt;
   logEvent({
@@ -762,8 +954,22 @@ const deleteCalc = async (
   }
   const blobPath = getBlobPath(userId, calcId, "ignored");
 
-  await deleteCalculatorEntities(traceId, userId, calcId);
-  await deleteCalculatorBlobs(traceId, blobPath.prefix);
+  try {
+    await deleteCalculatorEntities(traceId, userId, calcId);
+    await deleteCalculatorBlobs(traceId, blobPath.prefix);
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    logEvent({
+      level: "error",
+      op,
+      traceId,
+      event: "request.end",
+      durationMs,
+      status: 500,
+      calcId,
+    });
+    return storageErrorResponse(traceId);
+  }
 
   const durationMs = Date.now() - startedAt;
   logEvent({
