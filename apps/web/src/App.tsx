@@ -385,7 +385,12 @@ const App = () => {
           </button>
           {saveStatus && <span className="status">{saveStatus}</span>}
         </div>
-        <CalculatorViewer key={viewerKey} artifactHtml={artifactHtml} />
+        <CalculatorViewer
+          key={viewerKey}
+          artifactHtml={artifactHtml}
+          calcId={activeCalcId}
+          versionId={activeVersionId}
+        />
       </section>
       <section className="panel">
         <h2>My calculators</h2>
