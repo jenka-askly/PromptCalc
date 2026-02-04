@@ -98,6 +98,7 @@ const readMaxArtifactBytes = async (): Promise<number> => {
 
   const candidates = [
     path.resolve(process.cwd(), "spec/policy.yaml"),
+    path.resolve(__dirname, "../spec/policy.yaml"),
     path.resolve(__dirname, "../../../spec/policy.yaml"),
   ];
 

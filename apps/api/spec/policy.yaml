@@ -1,0 +1,26 @@
+# Purpose: Define minimal promptcalc policy rules for artifact scanning.
+# Persists: None.
+# Security Risks: Controls rejection criteria for untrusted, AI-generated artifacts.
+version: 1
+name: promptcalc-default
+banned:
+  - fetch(
+  - XMLHttpRequest
+  - WebSocket
+  - EventSource
+  - sendBeacon
+  - eval(
+  - new Function
+  - Function(
+  - <script src=
+  - <link
+  - @import
+  - url(
+  - window.open
+  - top.location
+  - parent.location
+required:
+  - content-security-policy
+  - default-src 'none'
+  - connect-src 'none'
+  - Generated calculator (offline). Do not enter passwords.

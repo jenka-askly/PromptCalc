@@ -23,7 +23,7 @@ import {
   buildGenerateRefusedResponse,
   type RefusalReason,
 } from "../generation/response";
-import { callOpenAIResponses } from "../openai/client";
+import { callOpenAIResponses, OpenAIBadRequestError } from "../openai/client";
 import { getPromptCalcPolicy } from "../policy/policy";
 import { scanArtifactHtml } from "../policy/scanner";
 import { getTraceId } from "../trace";
@@ -118,6 +118,13 @@ const jsonResponse = (
     "x-trace-id": traceId,
   },
 });
+
+const buildOpenAIBadRequestRefusal = (): RefusalReason =>
+  buildRefusalReason(
+    "OPENAI_BAD_REQUEST",
+    "OpenAI request invalid (400). Check server configuration.",
+    "Try again later or contact support."
+  );
 
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 401, {
@@ -755,8 +762,8 @@ const generateCalc = async (
       openAIConfig,
       {
         input: [
-          { role: "system", content: promptScanSystem },
-          { role: "user", content: promptScanUser },
+          { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
+          { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
         ],
         response_format: { type: "json_schema", json_schema: promptScanSchema },
         max_output_tokens: 350,
@@ -766,6 +773,9 @@ const generateCalc = async (
 
     promptDecision = promptScanResult.parsed;
   } catch (error) {
+    if (error instanceof OpenAIBadRequestError) {
+      return buildRefusalResponse(traceId, 502, buildOpenAIBadRequestRefusal());
+    }
     const reason = buildRefusalReason(
       "OPENAI_ERROR",
       "Prompt classification failed.",
@@ -876,8 +886,8 @@ const generateCalc = async (
       openAIConfig,
       {
         input: [
-          { role: "system", content: generationSystem },
-          { role: "user", content: generationUser },
+          { role: "system", content: [{ type: "input_text", text: generationSystem }] },
+          { role: "user", content: [{ type: "input_text", text: generationUser }] },
         ],
         response_format: { type: "json_schema", json_schema: generationSchema },
       },
@@ -886,6 +896,9 @@ const generateCalc = async (
 
     generationResult = generationResponse.parsed;
   } catch (error) {
+    if (error instanceof OpenAIBadRequestError) {
+      return buildRefusalResponse(traceId, 502, buildOpenAIBadRequestRefusal());
+    }
     const reason = buildRefusalReason(
       "OPENAI_ERROR",
       "Artifact generation failed.",
@@ -998,8 +1011,8 @@ const generateCalc = async (
       openAIConfig,
       {
         input: [
-          { role: "system", content: codeScanSystem },
-          { role: "user", content: codeScanUser },
+          { role: "system", content: [{ type: "input_text", text: codeScanSystem }] },
+          { role: "user", content: [{ type: "input_text", text: codeScanUser }] },
         ],
         response_format: { type: "json_schema", json_schema: codeScanSchema },
         max_output_tokens: 300,
@@ -1023,6 +1036,9 @@ const generateCalc = async (
       return buildRefusalResponse(traceId, 200, reason);
     }
   } catch (error) {
+    if (error instanceof OpenAIBadRequestError) {
+      return buildRefusalResponse(traceId, 502, buildOpenAIBadRequestRefusal());
+    }
     const reason = buildRefusalReason(
       "OPENAI_ERROR",
       "AI code scan failed.",

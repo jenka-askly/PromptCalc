@@ -25,6 +25,13 @@ export type PromptCalcPolicy = {
   bannedTags: PolicyRule[];
 };
 
+type PromptCalcPolicyFile = Partial<PromptCalcPolicy> & {
+  version?: string | number;
+  name?: string;
+  banned?: string[];
+  required?: string[];
+};
+
 const DEFAULT_POLICY: PromptCalcPolicy = {
   specVersion: "1.0",
   maxArtifactBytes: 200_000,
@@ -45,23 +52,89 @@ const DEFAULT_POLICY: PromptCalcPolicy = {
 
 let cachedPolicy: PromptCalcPolicy | null = null;
 
+const normalizeRequiredFields = (
+  parsed: PromptCalcPolicyFile
+): Pick<PromptCalcPolicy, "requiredBannerText" | "requiredCspDirectives"> => {
+  const requiredEntries = Array.isArray(parsed.required)
+    ? parsed.required.filter((entry): entry is string => typeof entry === "string")
+    : [];
+
+  const bannerEntry = requiredEntries.find((entry) =>
+    entry.toLowerCase().includes("generated calculator")
+  );
+
+  const directiveEntries = requiredEntries.filter((entry) => {
+    const normalized = entry.toLowerCase();
+    if (normalized === "content-security-policy") {
+      return false;
+    }
+    return (
+      normalized.startsWith("default-src") ||
+      normalized.startsWith("connect-src") ||
+      normalized.startsWith("img-src") ||
+      normalized.startsWith("script-src") ||
+      normalized.startsWith("style-src") ||
+      normalized.startsWith("base-uri") ||
+      normalized.startsWith("form-action") ||
+      normalized.startsWith("object-src")
+    );
+  });
+
+  return {
+    requiredBannerText: bannerEntry ?? DEFAULT_POLICY.requiredBannerText,
+    requiredCspDirectives:
+      directiveEntries.length > 0
+        ? directiveEntries
+        : DEFAULT_POLICY.requiredCspDirectives,
+  };
+};
+
+const normalizeBannedPatterns = (parsed: PromptCalcPolicyFile): PolicyRule[] => {
+  if (Array.isArray(parsed.bannedPatterns)) {
+    return parsed.bannedPatterns as PolicyRule[];
+  }
+
+  if (!Array.isArray(parsed.banned)) {
+    return DEFAULT_POLICY.bannedPatterns;
+  }
+
+  const patterns = parsed.banned.filter((entry): entry is string => typeof entry === "string");
+  if (patterns.length === 0) {
+    return DEFAULT_POLICY.bannedPatterns;
+  }
+
+  return [
+    {
+      id: "DISALLOWED_PATTERN",
+      patterns,
+    },
+  ];
+};
+
 const loadPolicyFromFile = async (policyPath: string): Promise<PromptCalcPolicy> => {
   const contents = await readFile(policyPath, "utf-8");
-  const parsed = parse(contents) as Partial<PromptCalcPolicy> | null;
+  const parsed = parse(contents) as PromptCalcPolicyFile | null;
 
   if (!parsed || typeof parsed !== "object") {
     return DEFAULT_POLICY;
   }
 
+  const normalizedRequired = normalizeRequiredFields(parsed);
+
   return {
     ...DEFAULT_POLICY,
     ...parsed,
+    specVersion:
+      parsed.specVersion ??
+      (parsed.version !== undefined ? String(parsed.version) : DEFAULT_POLICY.specVersion),
+    requiredBannerText:
+      typeof parsed.requiredBannerText === "string"
+        ? parsed.requiredBannerText
+        : normalizedRequired.requiredBannerText,
     requiredCspDirectives: Array.isArray(parsed.requiredCspDirectives)
       ? parsed.requiredCspDirectives
-      : DEFAULT_POLICY.requiredCspDirectives,
-    bannedPatterns: Array.isArray(parsed.bannedPatterns)
-      ? (parsed.bannedPatterns as PolicyRule[])
-      : DEFAULT_POLICY.bannedPatterns,
+      : normalizedRequired.requiredCspDirectives,
+    bannedPatterns: normalizeBannedPatterns(parsed),
     bannedTags: Array.isArray(parsed.bannedTags)
       ? (parsed.bannedTags as PolicyRule[])
       : DEFAULT_POLICY.bannedTags,
@@ -75,6 +148,7 @@ export const getPromptCalcPolicy = async (): Promise<PromptCalcPolicy> => {
 
   const candidates = [
     path.resolve(process.cwd(), "spec/policy.yaml"),
+    path.resolve(__dirname, "../../spec/policy.yaml"),
     path.resolve(__dirname, "../../../spec/policy.yaml"),
   ];
 
