@@ -21,7 +21,7 @@ const DEFAULT_TIMEOUT_MS = 4000;
 
 const READY_BOOTSTRAP_ID = "promptcalc-ready";
 const READY_BOOTSTRAP_SCRIPT =
-  "<script id=\"promptcalc-ready\">(function(){try{const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const sendReady=()=>{safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now()});safePost({type:\"ready\"});};const scheduleRetry=()=>{try{setTimeout(sendReady,250);}catch{}};const handlePing=(event)=>{try{const data=event&&event.data;if(data&&data.type===\"PROMPTCALC_PING\"){safePost({type:\"PROMPTCALC_PONG\",v:\"1\",ts:Date.now()});}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{sendReady();scheduleRetry();},{once:true});}else{sendReady();scheduleRetry();}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
+  "<script id=\"promptcalc-ready\">(function(){try{let token=null;const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const sendReady=(currentToken)=>{if(!currentToken){return;}safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now(),token:currentToken});safePost({type:\"ready\",token:currentToken});};const scheduleRetry=()=>{try{setTimeout(()=>{sendReady(token);},250);}catch{}};const handlePing=(event)=>{try{const data=event&&event.data;if(data&&data.type===\"PROMPTCALC_PING\"&&typeof data.token===\"string\"){token=data.token;safePost({type:\"PROMPTCALC_PONG\",v:\"1\",ts:Date.now(),token});sendReady(token);scheduleRetry();}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{sendReady(token);scheduleRetry();},{once:true});}else{sendReady(token);scheduleRetry();}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
 const READY_BOOTSTRAP_REGEX = new RegExp(
   `<script[^>]*id=["']${READY_BOOTSTRAP_ID}["'][^>]*>`,
   "i"
@@ -77,12 +77,16 @@ const buildBlankDoc = (): string => "<!doctype html><html><body></body></html>";
 
 const isHandshakeMessage = (
   data: unknown
-): data is { type: "ready" | "PROMPTCALC_READY" | "PROMPTCALC_PONG"; traceId?: string } => {
+): data is {
+  type: "ready" | "PROMPTCALC_READY" | "PROMPTCALC_PONG";
+  traceId?: string;
+  token?: string;
+} => {
   if (!data || typeof data !== "object") {
     return false;
   }
 
-  const record = data as { type?: unknown; traceId?: unknown };
+  const record = data as { type?: unknown; traceId?: unknown; token?: unknown };
   if (
     record.type !== "ready" &&
     record.type !== "PROMPTCALC_READY" &&
@@ -95,7 +99,19 @@ const isHandshakeMessage = (
     return false;
   }
 
+  if (record.token !== undefined && typeof record.token !== "string") {
+    return false;
+  }
+
   return true;
+};
+
+const generateHandshakeToken = (): string => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
 export const CalculatorViewer = ({
@@ -111,6 +127,7 @@ export const CalculatorViewer = ({
   const warningLoggedRef = useRef(false);
   const listenerReadyRef = useRef(false);
   const pingPendingRef = useRef(false);
+  const handshakeTokenRef = useRef<string>("");
   const [status, setStatus] = useState<ViewerStatus>("loading");
   const [errorCode, setErrorCode] = useState<ViewerErrorCode | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
@@ -123,47 +140,55 @@ export const CalculatorViewer = ({
     }
   }, [cspTemplate]);
 
+  const handleMessage = useCallback((event: MessageEvent) => {
+    const iframeWindow = iframeRef.current?.contentWindow;
+    if (!iframeWindow || event.source !== iframeWindow) {
+      return;
+    }
+
+    const now = performance.now();
+    if (now - rateRef.current.windowStart > 1000) {
+      rateRef.current = { windowStart: now, count: 0 };
+    }
+
+    if (rateRef.current.count >= 20) {
+      return;
+    }
+
+    rateRef.current.count += 1;
+
+    if (!isHandshakeMessage(event.data)) {
+      setStatus("error");
+      setErrorCode("INVALID_MESSAGE");
+      setSrcDoc(buildBlankDoc());
+      return;
+    }
+
+    if (event.data.token !== handshakeTokenRef.current) {
+      return;
+    }
+
+    if (event.data.type === "ready" || event.data.type === "PROMPTCALC_READY") {
+      handshakeRef.current.ready = true;
+    }
+    if (event.data.type === "PROMPTCALC_PONG") {
+      handshakeRef.current.pong = true;
+    }
+
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    setStatus("ready");
+    setErrorCode(null);
+    setTraceId(event.data.traceId ?? null);
+  }, []);
+
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const iframeWindow = iframeRef.current?.contentWindow;
-      if (!iframeWindow || event.source !== iframeWindow) {
-        return;
-      }
-
-      const now = performance.now();
-      if (now - rateRef.current.windowStart > 1000) {
-        rateRef.current = { windowStart: now, count: 0 };
-      }
-
-      if (rateRef.current.count >= 20) {
-        return;
-      }
-
-      rateRef.current.count += 1;
-
-      if (!isHandshakeMessage(event.data)) {
-        setStatus("error");
-        setErrorCode("INVALID_MESSAGE");
-        setSrcDoc(buildBlankDoc());
-        return;
-      }
-
-      if (event.data.type === "ready" || event.data.type === "PROMPTCALC_READY") {
-        handshakeRef.current.ready = true;
-      }
-      if (event.data.type === "PROMPTCALC_PONG") {
-        handshakeRef.current.pong = true;
-      }
-
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-
-      setStatus("ready");
-      setErrorCode(null);
-      setTraceId(event.data.traceId ?? null);
-    };
+    if (listenerReadyRef.current) {
+      return;
+    }
 
     window.addEventListener("message", handleMessage);
     listenerReadyRef.current = true;
@@ -171,7 +196,7 @@ export const CalculatorViewer = ({
       listenerReadyRef.current = false;
       window.removeEventListener("message", handleMessage);
     };
-  }, []);
+  }, [handleMessage]);
 
   useEffect(() => {
     if (!listenerReadyRef.current) {
@@ -187,6 +212,7 @@ export const CalculatorViewer = ({
     handshakeRef.current = { ready: false, pong: false };
     warningLoggedRef.current = false;
     pingPendingRef.current = true;
+    handshakeTokenRef.current = generateHandshakeToken();
 
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
@@ -236,7 +262,12 @@ export const CalculatorViewer = ({
 
     try {
       iframeWindow.postMessage(
-        { type: "PROMPTCALC_PING", v: "1", ts: Date.now() },
+        {
+          type: "PROMPTCALC_PING",
+          v: "1",
+          ts: Date.now(),
+          token: handshakeTokenRef.current,
+        },
         "*"
       );
     } catch {
