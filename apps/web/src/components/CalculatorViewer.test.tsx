@@ -30,7 +30,7 @@ const stubHandshakeToken = () => {
 };
 
 describe("CalculatorViewer", () => {
-  it("stays ready when the iframe posts READY before watchdog timeout", async () => {
+  it("stays ready when the iframe posts READY without a token", async () => {
     vi.useFakeTimers();
     const restoreCrypto = stubHandshakeToken();
 
@@ -42,7 +42,7 @@ describe("CalculatorViewer", () => {
 
     window.dispatchEvent(
       new MessageEvent("message", {
-        data: { type: "PROMPTCALC_READY", token: TEST_TOKEN },
+        data: { type: "ready" },
         source: fakeWindow as unknown as MessageEventSource,
       })
     );

@@ -23,7 +23,7 @@ const DEFAULT_TIMEOUT_MS = 4000;
 
 const READY_BOOTSTRAP_ID = "promptcalc-ready";
 const READY_BOOTSTRAP_SCRIPT =
-  "<script id=\"promptcalc-ready\">(function(){try{let token=null;const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const sendReady=(currentToken)=>{if(!currentToken){return;}safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now(),token:currentToken});safePost({type:\"ready\",token:currentToken});};const scheduleRetry=()=>{try{setTimeout(()=>{sendReady(token);},250);}catch{}};const handlePing=(event)=>{try{const data=event&&event.data;if(data&&data.type===\"PROMPTCALC_PING\"&&typeof data.token===\"string\"){token=data.token;safePost({type:\"PROMPTCALC_PONG\",v:\"1\",ts:Date.now(),token});sendReady(token);scheduleRetry();}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{sendReady(token);scheduleRetry();},{once:true});}else{sendReady(token);scheduleRetry();}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
+  "<script id=\"promptcalc-ready\">(function(){try{let token=null;const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const sendReady=(currentToken)=>{try{const readyPayload=currentToken?{token:currentToken}:{};safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now(),...readyPayload});safePost({type:\"ready\",...readyPayload});}catch{}};const handlePing=(event)=>{try{const data=event&&event.data;if(data&&data.type===\"PROMPTCALC_PING\"&&typeof data.token===\"string\"){token=data.token;safePost({type:\"PROMPTCALC_PONG\",v:\"1\",ts:Date.now(),token});sendReady(token);}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{sendReady(token);},{once:true});}else{sendReady(token);}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
 const READY_BOOTSTRAP_REGEX = new RegExp(
   `<script[^>]*id=["']${READY_BOOTSTRAP_ID}["'][^>]*>`,
   "i"
@@ -82,7 +82,7 @@ const isHandshakeMessage = (
 ): data is {
   type: "ready" | "PROMPTCALC_READY" | "PROMPTCALC_PONG";
   traceId?: string;
-  token?: string;
+  token?: string | null;
 } => {
   if (!data || typeof data !== "object") {
     return false;
@@ -101,7 +101,11 @@ const isHandshakeMessage = (
     return false;
   }
 
-  if (record.token !== undefined && typeof record.token !== "string") {
+  if (
+    record.token !== undefined &&
+    record.token !== null &&
+    typeof record.token !== "string"
+  ) {
     return false;
   }
 
@@ -144,6 +148,10 @@ export const CalculatorViewer = ({
   const [lastMsgType, setLastMsgType] = useState<string | null>(null);
   const [lastMsgOrigin, setLastMsgOrigin] = useState<string | null>(null);
   const isDev = import.meta.env.DEV;
+  const normalizedArtifactHtml = useMemo(
+    () => normalizeArtifactHtml(artifactHtml, cspTemplate),
+    [artifactHtml, cspTemplate]
+  );
   const iframeKey = `viewer-${retryToken}`;
 
   useEffect(() => {
@@ -189,17 +197,27 @@ export const CalculatorViewer = ({
       return;
     }
 
-    if (event.data.token !== handshakeTokenRef.current) {
+    const token = event.data.token ?? null;
+    const tokenOk =
+      !handshakeTokenRef.current ||
+      token === null ||
+      token === handshakeTokenRef.current;
+
+    const isReady =
+      event.data.type === "ready" || event.data.type === "PROMPTCALC_READY";
+    const isPong = event.data.type === "PROMPTCALC_PONG";
+
+    if (!tokenOk || (!isReady && !isPong)) {
       return;
     }
 
-    if (event.data.type === "ready" || event.data.type === "PROMPTCALC_READY") {
+    if (isReady) {
       handshakeRef.current.ready = true;
       if (isDev) {
         setSawReady(true);
       }
     }
-    if (event.data.type === "PROMPTCALC_PONG") {
+    if (isPong) {
       handshakeRef.current.pong = true;
       if (isDev) {
         setSawPong(true);
@@ -237,20 +255,18 @@ export const CalculatorViewer = ({
       return;
     }
 
-    const nextDoc = normalizeArtifactHtml(artifactHtml, cspTemplate);
-
     if (isDev) {
       console.warn("CalculatorViewer load start", {
         calcId,
         versionId,
-        artifactLength: artifactHtml.length,
+        artifactLength: normalizedArtifactHtml.length,
       });
     }
 
     setStatus("loading");
     setErrorCode(null);
     setTraceId(null);
-    setSrcDoc(nextDoc);
+    setSrcDoc(normalizedArtifactHtml);
     handshakeRef.current = { ready: false, pong: false };
     warningLoggedRef.current = false;
     pingPendingRef.current = true;
@@ -294,8 +310,7 @@ export const CalculatorViewer = ({
       }
     };
   }, [
-    artifactHtml,
-    cspTemplate,
+    normalizedArtifactHtml,
     timeoutMs,
     retryToken,
     calcId,
