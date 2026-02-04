@@ -1,33 +1,17 @@
 <!--
-Purpose: Describe the PromptCalc experiment scaffold, local development steps, and stubbed behavior.
+Purpose: Describe the PromptCalc prototype and point to the canonical specification.
 Persists: None.
 Security Risks: None.
 -->
 
 # PromptCalc
 
-PromptCalc is an experiment scaffold for turning prompts into constrained calculator UIs with a minimal web frontend and an Azure Functions (.NET isolated) backend.
+PromptCalc is a spec-driven prototype for turning prompts into constrained, offline calculator UIs. The canonical specification lives in [`spec/SPEC.md`](spec/SPEC.md) and is the single source of truth.
 
-## Prerequisites
-- .NET 8 SDK
-- Node.js 18+
-
-## Run the API locally
-```bash
-dotnet restore
-cd api
-
-dotnet build -c Release
-cd src/PromptCalc.Api
-func start
-```
-
-## Run the web locally
-```bash
-cd web
-npm install
-npm run dev
-```
-
-## Notes
-- Key features (OTP auth, OpenAI integration, blob storage, calculator rendering) are intentionally stubbed in this scaffold.
+## Prototype steps (high level)
+- Step 0: Spec lock and policy artifacts.
+- Step 1: Scaffold inputs/outputs for the prototype pipeline.
+- Step 2: Renderer wiring for calculator UI.
+- Step 3: Safe evaluation pipeline.
+- Step 4: Scanner and enforcement integration.
+- Step 5: End-to-end prototype validation.
