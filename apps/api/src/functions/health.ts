@@ -11,12 +11,16 @@ import { getTraceId } from "../trace";
 
 const buildId = process.env.BUILD_ID || "dev";
 
-const toResponse = (traceId: string): HttpResponseInit => ({
+const toResponse = (
+  traceId: string,
+  authContext: { isAuthenticated: boolean; identityProvider?: string; userId?: string }
+): HttpResponseInit => ({
   jsonBody: {
     ok: true,
     service: "api",
     build: buildId,
     traceId,
+    auth: authContext,
   },
   headers: {
     "content-type": "application/json",
@@ -31,7 +35,7 @@ export const health = async (
   const traceId = getTraceId(req.headers.get("traceparent"));
   const startedAt = Date.now();
   const op = "health";
-  const { userId, isDevUser } = getUserContext(req);
+  const { userId, isAuthenticated, identityProvider } = getUserContext(req);
 
   logEvent({
     level: "info",
@@ -41,10 +45,15 @@ export const health = async (
     method: req.method,
     route: "/api/health",
     userId,
-    isDevUser,
+    isAuthenticated,
+    identityProvider,
   });
 
-  const response = toResponse(traceId);
+  const response = toResponse(traceId, {
+    isAuthenticated,
+    identityProvider,
+    ...(isAuthenticated || identityProvider === "dev" ? { userId } : {}),
+  });
   const durationMs = Date.now() - startedAt;
 
   logEvent({

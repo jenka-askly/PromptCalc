@@ -22,7 +22,28 @@ body {
 }
 
 header h1 {
+  margin: 0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
   margin-bottom: 16px;
+}
+
+.auth {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.auth-status {
+  font-size: 14px;
+  color: #475569;
 }
 
 .panel {
