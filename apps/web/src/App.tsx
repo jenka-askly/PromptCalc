@@ -4,7 +4,7 @@
  * Security Risks: Calls backend persistence endpoints, logs trace IDs, and renders untrusted HTML in a sandboxed iframe.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CalculatorViewer } from "./components/CalculatorViewer";
 import { BAD_CALC_HTML } from "./samples/badCalcInfiniteLoop";
@@ -63,21 +63,75 @@ type AuthState =
   | { mode: "signed-in" }
   | { mode: "signed-out" };
 
+type ArtifactStatus = "sample" | "saved";
+
+interface CurrentArtifact {
+  calcId: string | null;
+  versionId: string | null;
+  artifactHtml: string;
+  manifest?: Record<string, unknown>;
+  artifactHash: string;
+  status: ArtifactStatus;
+}
+
+const buildSampleManifest = (sample: "good" | "bad") => ({
+  specVersion: "1.0",
+  title: sample === "good" ? "Offline Add Calculator" : "Broken Sample Calc",
+  executionModel: "eventHandlers",
+  capabilities: {
+    network: false,
+  },
+  inputs: [],
+  outputs: [],
+  limitations: [],
+  safetyNotes: [],
+});
+
+const computeArtifactHash = (artifactHtml: string) => {
+  let hash = 0;
+  for (let i = 0; i < artifactHtml.length; i += 1) {
+    hash = (hash * 31 + artifactHtml.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(16);
+};
+
+const buildCurrentArtifact = ({
+  artifactHtml,
+  calcId = null,
+  versionId = null,
+  manifest,
+  status,
+}: {
+  artifactHtml: string;
+  calcId?: string | null;
+  versionId?: string | null;
+  manifest?: Record<string, unknown>;
+  status: ArtifactStatus;
+}): CurrentArtifact => ({
+  artifactHtml,
+  calcId,
+  versionId,
+  manifest,
+  artifactHash: computeArtifactHash(artifactHtml),
+  status,
+});
+
 const App = () => {
   const [status, setStatus] = useState<HealthResponse | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sample, setSample] = useState<"good" | "bad">("good");
-  const [artifactHtml, setArtifactHtml] = useState<string>(GOOD_CALC_HTML);
-  const [artifactSource, setArtifactSource] = useState<"sample" | "saved">(
-    "sample"
+  const [currentArtifact, setCurrentArtifact] = useState<CurrentArtifact>(() =>
+    buildCurrentArtifact({
+      artifactHtml: GOOD_CALC_HTML,
+      manifest: buildSampleManifest("good"),
+      status: "sample",
+    })
   );
   const [calcs, setCalcs] = useState<CalculatorSummary[]>([]);
   const [calcsError, setCalcsError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [loadingCalcs, setLoadingCalcs] = useState(false);
-  const [activeCalcId, setActiveCalcId] = useState<string | null>(null);
-  const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const [authState, setAuthState] = useState<AuthState>({ mode: "unknown" });
   const [generatePrompt, setGeneratePrompt] = useState(
     "Simple tip calculator with bill + tip% + total."
@@ -85,43 +139,66 @@ const App = () => {
   const [generateStatus, setGenerateStatus] = useState<string | null>(null);
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-
-  const artifactHash = useMemo(() => {
-    let hash = 0;
-    for (let i = 0; i < artifactHtml.length; i += 1) {
-      hash = (hash * 31 + artifactHtml.charCodeAt(i)) | 0;
-    }
-    return Math.abs(hash).toString(16);
-  }, [artifactHtml]);
-
-  const viewerKey = `${activeCalcId ?? "sample"}:${activeVersionId ?? "draft"}:${artifactHash}`;
+  const previousArtifactRef = useRef<CurrentArtifact | null>(null);
+  const viewerKey = `${currentArtifact.artifactHash}`;
 
   const sampleArtifactHtml = useMemo(
     () => (sample === "good" ? GOOD_CALC_HTML : BAD_CALC_HTML),
     [sample]
   );
 
-  const sampleManifest = useMemo(
-    () => ({
-      specVersion: "1.0",
-      title: sample === "good" ? "Offline Add Calculator" : "Broken Sample Calc",
-      executionModel: "eventHandlers",
-      capabilities: {
-        network: false,
-      },
-      inputs: [],
-      outputs: [],
-      limitations: [],
-      safetyNotes: [],
-    }),
-    [sample]
-  );
+  const sampleManifest = useMemo(() => buildSampleManifest(sample), [sample]);
+  const isDev = import.meta.env.DEV;
 
   useEffect(() => {
-    if (artifactSource === "sample") {
-      setArtifactHtml(sampleArtifactHtml);
+    if (currentArtifact.status === "sample") {
+      const sampleHash = computeArtifactHash(sampleArtifactHtml);
+      if (
+        currentArtifact.artifactHash !== sampleHash ||
+        currentArtifact.manifest !== sampleManifest
+      ) {
+        setCurrentArtifact(
+          buildCurrentArtifact({
+            artifactHtml: sampleArtifactHtml,
+            manifest: sampleManifest,
+            status: "sample",
+          })
+        );
+      }
     }
-  }, [artifactSource, sampleArtifactHtml]);
+  }, [currentArtifact.status, sampleArtifactHtml, sampleManifest]);
+
+  useEffect(() => {
+    if (!isDev) {
+      previousArtifactRef.current = currentArtifact;
+      return;
+    }
+
+    const previous = previousArtifactRef.current;
+    if (
+      !previous ||
+      previous.artifactHash !== currentArtifact.artifactHash ||
+      previous.calcId !== currentArtifact.calcId ||
+      previous.versionId !== currentArtifact.versionId
+    ) {
+      console.warn("App current artifact changed", {
+        length: currentArtifact.artifactHtml.length,
+        calcId: currentArtifact.calcId,
+        versionId: currentArtifact.versionId,
+        hash: currentArtifact.artifactHash,
+        status: currentArtifact.status,
+      });
+    }
+
+    if (currentArtifact.artifactHtml.length === 0) {
+      console.warn("App current artifact cleared unexpectedly", {
+        calcId: currentArtifact.calcId,
+        versionId: currentArtifact.versionId,
+      });
+    }
+
+    previousArtifactRef.current = currentArtifact;
+  }, [currentArtifact, isDev]);
 
   const resolveAuthState = (health: HealthResponse) => {
     if (health.auth?.identityProvider === "dev") {
@@ -215,8 +292,15 @@ const App = () => {
 
       const data = (await response.json()) as SaveCalcResponse;
       setSaveStatus(`Saved ${data.calcId} v${data.versionId}`);
-      setActiveCalcId(data.calcId);
-      setActiveVersionId(data.versionId);
+      setCurrentArtifact((prev) =>
+        buildCurrentArtifact({
+          artifactHtml: prev.artifactHtml,
+          manifest: prev.manifest,
+          status: "saved",
+          calcId: data.calcId,
+          versionId: data.versionId,
+        })
+      );
       await loadCalcs();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -237,8 +321,8 @@ const App = () => {
         },
         body: JSON.stringify({
           prompt: generatePrompt,
-          baseCalcId: activeCalcId ?? undefined,
-          baseVersionId: activeVersionId ?? undefined,
+          baseCalcId: currentArtifact.calcId ?? undefined,
+          baseVersionId: currentArtifact.versionId ?? undefined,
         }),
       });
 
@@ -255,10 +339,15 @@ const App = () => {
         return;
       }
 
-      setArtifactHtml(data.artifactHtml);
-      setArtifactSource("saved");
-      setActiveCalcId(data.calcId);
-      setActiveVersionId(data.versionId);
+      setCurrentArtifact(
+        buildCurrentArtifact({
+          artifactHtml: data.artifactHtml,
+          manifest: data.manifest,
+          status: "saved",
+          calcId: data.calcId,
+          versionId: data.versionId,
+        })
+      );
       setGenerateStatus(`Generated ${data.calcId} v${data.versionId}`);
       await loadCalcs();
     } catch (err) {
@@ -270,6 +359,9 @@ const App = () => {
   };
 
   const loadVersion = async (calcId: string, versionId: string) => {
+    if (currentArtifact.calcId === calcId && currentArtifact.versionId === versionId) {
+      return;
+    }
     setCalcsError(null);
     try {
       const response = await fetch(`/api/calcs/${calcId}/versions/${versionId}`);
@@ -278,10 +370,15 @@ const App = () => {
       }
 
       const data = (await response.json()) as CalculatorVersionResponse;
-      setArtifactHtml(data.artifactHtml);
-      setArtifactSource("saved");
-      setActiveCalcId(calcId);
-      setActiveVersionId(versionId);
+      setCurrentArtifact(
+        buildCurrentArtifact({
+          artifactHtml: data.artifactHtml,
+          manifest: data.manifest,
+          status: "saved",
+          calcId,
+          versionId,
+        })
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setCalcsError(message);
@@ -360,7 +457,13 @@ const App = () => {
               checked={sample === "good"}
               onChange={() => {
                 setSample("good");
-                setArtifactSource("sample");
+                setCurrentArtifact(
+                  buildCurrentArtifact({
+                    artifactHtml: GOOD_CALC_HTML,
+                    manifest: buildSampleManifest("good"),
+                    status: "sample",
+                  })
+                );
               }}
             />
             Good sample
@@ -373,7 +476,13 @@ const App = () => {
               checked={sample === "bad"}
               onChange={() => {
                 setSample("bad");
-                setArtifactSource("sample");
+                setCurrentArtifact(
+                  buildCurrentArtifact({
+                    artifactHtml: BAD_CALC_HTML,
+                    manifest: buildSampleManifest("bad"),
+                    status: "sample",
+                  })
+                );
               }}
             />
             Bad sample (hang)
@@ -387,9 +496,9 @@ const App = () => {
         </div>
         <CalculatorViewer
           key={viewerKey}
-          artifactHtml={artifactHtml}
-          calcId={activeCalcId}
-          versionId={activeVersionId}
+          artifactHtml={currentArtifact.artifactHtml}
+          calcId={currentArtifact.calcId}
+          versionId={currentArtifact.versionId}
         />
       </section>
       <section className="panel">
@@ -424,9 +533,9 @@ const App = () => {
             ))}
           </ul>
         )}
-        {activeCalcId && activeVersionId && (
+        {currentArtifact.calcId && currentArtifact.versionId && (
           <p className="status">
-            Loaded {activeCalcId} v{activeVersionId}
+            Loaded {currentArtifact.calcId} v{currentArtifact.versionId}
           </p>
         )}
       </section>
