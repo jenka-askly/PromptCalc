@@ -34,7 +34,7 @@ type PromptCalcPolicyFile = Partial<PromptCalcPolicy> & {
 };
 
 const DEFAULT_POLICY: PromptCalcPolicy = {
-  specVersion: "1.0",
+  specVersion: "1.1",
   maxArtifactBytes: 200_000,
   requiredBannerText: "Generated calculator (offline). Do not enter passwords.",
   requiredReadyMarker: "promptcalc-ready",

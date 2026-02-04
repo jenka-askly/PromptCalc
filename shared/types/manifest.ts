@@ -4,10 +4,10 @@
  * Security Risks: None.
  */
 
-export type ExecutionModel = "expression" | "eventHandlers" | "customJS";
+export type ExecutionModel = "form" | "expression";
 
 export interface PromptCalcManifest {
-  specVersion: "1.0";
+  specVersion: "1.1";
   title: string;
   description: string;
   executionModel: ExecutionModel;

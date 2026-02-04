@@ -75,9 +75,9 @@ interface CurrentArtifact {
 }
 
 const buildSampleManifest = (sample: "good" | "bad") => ({
-  specVersion: "1.0",
+  specVersion: "1.1",
   title: sample === "good" ? "Offline Add Calculator" : "Broken Sample Calc",
-  executionModel: "eventHandlers",
+  executionModel: "form",
   capabilities: {
     network: false,
   },
@@ -141,6 +141,14 @@ const App = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const previousArtifactRef = useRef<CurrentArtifact | null>(null);
   const viewerKey = `${currentArtifact.artifactHash}`;
+  const manifestExecutionModel =
+    typeof currentArtifact.manifest?.executionModel === "string"
+      ? currentArtifact.manifest.executionModel
+      : "unknown";
+  const manifestSpecVersion =
+    typeof currentArtifact.manifest?.specVersion === "string"
+      ? currentArtifact.manifest.specVersion
+      : "unknown";
 
   const sampleArtifactHtml = useMemo(
     () => (sample === "good" ? GOOD_CALC_HTML : BAD_CALC_HTML),
@@ -500,6 +508,21 @@ const App = () => {
           calcId={currentArtifact.calcId}
           versionId={currentArtifact.versionId}
         />
+        {currentArtifact.manifest && (
+          <div className="manifest-details">
+            <h3>Manifest details</h3>
+            <dl>
+              <div>
+                <dt>Spec version</dt>
+                <dd>{manifestSpecVersion}</dd>
+              </div>
+              <div>
+                <dt>Execution model</dt>
+                <dd>{manifestExecutionModel}</dd>
+              </div>
+            </dl>
+          </div>
+        )}
       </section>
       <section className="panel">
         <h2>My calculators</h2>
