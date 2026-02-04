@@ -28,6 +28,28 @@ export type OpenAITextFormat =
     }
   | {
       type: "json_object";
+    }
+  | {
+      type: "text";
+    };
+
+type LegacyResponseFormat =
+  | {
+      type: "json_schema";
+      name?: string;
+      schema?: Record<string, unknown>;
+      strict?: boolean;
+      json_schema?: {
+        name?: string;
+        schema?: Record<string, unknown>;
+        strict?: boolean;
+      };
+    }
+  | {
+      type: "json_object";
+    }
+  | {
+      type: "text";
     };
 
 export type OpenAIRequest = {
@@ -37,6 +59,7 @@ export type OpenAIRequest = {
   text?: {
     format?: OpenAITextFormat;
   };
+  response_format?: LegacyResponseFormat;
 };
 
 export type OpenAIRequestOptions = {
@@ -182,6 +205,57 @@ const extractErrorMessage = (payload: OpenAIResponse): string | undefined => {
 
 const buildJsonObjectFormat = (): OpenAITextFormat => ({ type: "json_object" });
 
+const resolveLegacyTextFormat = (legacy?: LegacyResponseFormat): OpenAITextFormat | undefined => {
+  if (!legacy || typeof legacy !== "object") {
+    return undefined;
+  }
+  if (legacy.type === "json_object") {
+    return { type: "json_object" };
+  }
+  if (legacy.type === "text") {
+    return { type: "text" };
+  }
+  if (legacy.type !== "json_schema") {
+    return undefined;
+  }
+  const legacySchema = legacy.json_schema;
+  const name = legacySchema?.name ?? legacy.name;
+  const schema = legacySchema?.schema ?? legacy.schema;
+  const strict = legacySchema?.strict ?? legacy.strict ?? true;
+  if (!name || !schema) {
+    return buildJsonObjectFormat();
+  }
+  return {
+    type: "json_schema",
+    name,
+    schema,
+    strict,
+  };
+};
+
+const resolveTextFormat = (requestBody: OpenAIRequest): OpenAITextFormat | undefined =>
+  requestBody.text?.format ?? resolveLegacyTextFormat(requestBody.response_format);
+
+export const buildOpenAIResponsesPayload = (
+  config: OpenAIClientConfig,
+  requestBody: OpenAIRequest,
+  formatOverride?: OpenAITextFormat
+): {
+  model: string;
+  input: OpenAIRequest["input"];
+  max_output_tokens: number;
+  text?: OpenAIRequest["text"];
+} => {
+  const format = formatOverride ?? resolveTextFormat(requestBody);
+  const text = format ? { ...(requestBody.text ?? {}), format } : requestBody.text;
+  return {
+    model: requestBody.model ?? config.model,
+    input: requestBody.input,
+    max_output_tokens: requestBody.max_output_tokens ?? config.maxTokens,
+    text,
+  };
+};
+
 const isJsonSchemaUnsupported = (errorMessage?: string): boolean => {
   if (!errorMessage) {
     return false;
@@ -203,23 +277,15 @@ export const callOpenAIResponses = async <T>(
 ): Promise<{ parsed: T; raw: OpenAIResponse }> => {
   const baseUrl = config.baseUrl.endsWith("/") ? config.baseUrl : `${config.baseUrl}/`;
   const url = new URL("responses", baseUrl).toString();
-  const buildRequestPayload = (formatOverride?: OpenAITextFormat) => {
-    const format = formatOverride ?? requestBody.text?.format;
-    const text = format ? { ...(requestBody.text ?? {}), format } : requestBody.text;
-    return {
-      model: requestBody.model ?? config.model,
-      input: requestBody.input,
-      max_output_tokens: requestBody.max_output_tokens ?? config.maxTokens,
-      text,
-    };
-  };
 
   let maxAttempts = options.maxAttempts ?? 3;
   let lastError: Error | null = null;
   let usedJsonFallback = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const requestPayload = buildRequestPayload(
+    const requestPayload = buildOpenAIResponsesPayload(
+      config,
+      requestBody,
       usedJsonFallback ? buildJsonObjectFormat() : undefined
     );
     const body = JSON.stringify(requestPayload);
@@ -311,6 +377,12 @@ export const callOpenAIResponses = async <T>(
         shouldRetry = true;
       } else {
         try {
+          if (requestPayload.text?.format?.type === "text") {
+            return {
+              parsed: outputText as T,
+              raw: payload,
+            };
+          }
           return {
             parsed: parseJsonLenient<T>(outputText),
             raw: payload,
