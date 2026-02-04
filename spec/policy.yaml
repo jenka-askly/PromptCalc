@@ -1,0 +1,25 @@
+# Purpose: Define scanner policy limits and banned patterns for PromptCalc artifacts.
+# Persists: None.
+# Security Risks: Controls rejection criteria for untrusted, AI-generated artifacts.
+specVersion: "1.0"
+maxArtifactBytes: 204800
+cspTemplate: "default-src 'none'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+bannedPatterns:
+  - "fetch("
+  - "XMLHttpRequest"
+  - "WebSocket"
+  - "sendBeacon"
+  - "<script"
+  - "src="
+  - "eval("
+  - "new Function"
+  - "Function("
+  - "import("
+  - "setInterval("
+  - "requestAnimationFrame("
+  - "while(true)"
+  - "for(;;)"
+  - "window.open("
+  - "top.location"
+  - "location.href="
+  - "document.location="
