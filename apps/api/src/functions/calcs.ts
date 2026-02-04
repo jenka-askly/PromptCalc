@@ -33,6 +33,7 @@ import {
   buildGenerateRefusedResponse,
   type RefusalReason,
 } from "../generation/response";
+import { ensureFormSafety } from "../generation/artifactPostprocess";
 import {
   callOpenAIResponses,
   OpenAIBadRequestError,
@@ -737,7 +738,8 @@ const saveCalc = async (
     });
   }
 
-  const artifactHtml = ensureReadyBootstrap(body.artifactHtml);
+  const formSafety = ensureFormSafety(body.artifactHtml);
+  const artifactHtml = ensureReadyBootstrap(formSafety.html);
   const artifactBytes = Buffer.byteLength(artifactHtml, "utf8");
   const maxArtifactBytes = await getMaxArtifactBytes();
   if (artifactBytes > maxArtifactBytes) {
@@ -805,6 +807,16 @@ const saveCalc = async (
   };
 
   try {
+    if (formSafety.containsForm) {
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.containsForm",
+        calcId,
+        versionId,
+      });
+    }
     await persistArtifactBlob(traceId, blobPath.artifact, artifactHtml);
     await persistManifestBlob(traceId, blobPath.manifest, body.manifest);
     await persistCalculatorVersionEntity(traceId, versionEntity);
@@ -1033,6 +1045,11 @@ const generateCalc = async (
     "Do not generate any <script src=...>, <link ...>, @import, or url(...).",
     "All logic must be implemented with ordinary named functions and event listeners (e.g., addEventListener).",
     "No network access. No connect-src usage beyond 'none'.",
+    "Do NOT use <form> tags for v1 calculators.",
+    "Use <div> layout with labeled inputs instead of forms.",
+    "Any action button MUST be <button type=\"button\">.",
+    "Attach click handlers via addEventListener after DOMContentLoaded.",
+    "Do not rely on submit/default form behavior.",
     "Execution model selection rules:",
     getExecutionModelRuleText(),
     `For this prompt, set executionModel=\"${expectedExecutionModel}\".`,
@@ -1209,6 +1226,7 @@ const generateCalc = async (
   let finalHtml = "";
   let finalArtifactBytes = 0;
   let artifactBytes = 0;
+  let formSafetyResult: { html: string; containsForm: boolean } | null = null;
 
   for (let attempt = 0; attempt < generationAttempts.length; attempt += 1) {
     const { userText, repairText, opName } = generationAttempts[attempt];
@@ -1276,7 +1294,8 @@ const generateCalc = async (
       capabilities: { network: false },
       hash: "",
     } as Record<string, unknown>;
-    const readyHtml = ensureReadyBootstrap(generationResult.artifactHtml);
+    formSafetyResult = ensureFormSafety(generationResult.artifactHtml);
+    const readyHtml = ensureReadyBootstrap(formSafetyResult.html);
     const placeholderHtml = embedManifestInHtml(readyHtml, baseManifest);
     const manifestHash = computeSha256(placeholderHtml);
     finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
@@ -1596,6 +1615,16 @@ const generateCalc = async (
     };
 
     try {
+      if (formSafetyResult?.containsForm) {
+        logEvent({
+          level: "warn",
+          op,
+          traceId,
+          event: "artifact.containsForm",
+          calcId,
+          versionId,
+        });
+      }
       await persistArtifactBlob(traceId, blobPath.artifact, finalHtml);
       await persistManifestBlob(traceId, blobPath.manifest, finalManifest);
       await persistCalculatorVersionEntity(traceId, versionEntity);

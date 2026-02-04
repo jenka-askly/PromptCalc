@@ -8,6 +8,18 @@ Security Risks: None.
 
 ## 2026-02-04
 **Summary**
+- Updated generation instructions to avoid `<form>` tags and enforce button click handlers for calculators.
+- Added deterministic artifact post-processing to rewrite form buttons, prevent submit navigation, and log form presence.
+- Added unit coverage for form safety rewrites plus continuity status updates.
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- Revalidate CNC/tip calculators in sandboxed iframe to confirm no blocked form submission warnings.
+
+## 2026-02-04
+**Summary**
 - Refined AI scan rubric to explicitly allow warning banners, DOM event wiring, and clarified dynamic code execution scope.
 - Added deterministic post-processing guardrails plus tests to suppress known false positives while reporting disallowed evidence.
 - Updated AI scan refusal messaging with targeted alternatives and logged ignored/allowed issue groups.
