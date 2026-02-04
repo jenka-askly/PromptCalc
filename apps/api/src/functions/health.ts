@@ -6,7 +6,7 @@
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { logEvent } from "@promptcalc/logger";
-import { getUserId } from "../auth";
+import { getUserContext } from "../auth";
 import { getTraceId } from "../trace";
 
 const buildId = process.env.BUILD_ID || "dev";
@@ -31,6 +31,7 @@ export const health = async (
   const traceId = getTraceId(req.headers.get("traceparent"));
   const startedAt = Date.now();
   const op = "health";
+  const { userId, isDevUser } = getUserContext(req);
 
   logEvent({
     level: "info",
@@ -39,10 +40,9 @@ export const health = async (
     event: "request.start",
     method: req.method,
     route: "/api/health",
+    userId,
+    isDevUser,
   });
-
-  const userId = getUserId(req);
-  void userId;
 
   const response = toResponse(traceId);
   const durationMs = Date.now() - startedAt;

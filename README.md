@@ -12,6 +12,10 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
 - Use Node.js 20 and Azure Functions Core Tools v4 for the API.
 - Install dependencies: `npm install`
 - Start the web app and API together: `npm run dev`
+- Three-terminal flow (Windows-friendly):
+  1) `scripts\\azurite.cmd`
+  2) `npm run dev`
+  3) Open `http://localhost:5173`
 
 ## Persistence (local)
 - PromptCalc uses Azure Table + Blob storage for calculator persistence.
@@ -25,6 +29,7 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
 - To run Azurite locally:
   - Install Azurite (`npm install -g azurite`) or run it via Docker.
   - Start it before `npm run dev` if you want persistence.
+  - If you see “API version not supported”, ensure `--skipApiVersionCheck` is used.
 - Optional smoke test: `pwsh scripts/dev-smoke.ps1` (requires the API host running).
 
 ## Quick sanity check
