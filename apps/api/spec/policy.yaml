@@ -14,7 +14,7 @@ banned:
   - Function(
   - <script src=
   - <link
-  - @import
+  - "@import"
   - url(
   - window.open
   - top.location
