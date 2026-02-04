@@ -10,6 +10,8 @@ export type RefusalReason = {
   code: RefusalCode | string;
   message: string;
   safeAlternative: string;
+  matchIndex?: number;
+  contextSnippet?: string;
 };
 
 export type GenerateOkResponse = {

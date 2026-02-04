@@ -292,11 +292,13 @@ const logTableError = (
 const buildRefusalReason = (
   code: RefusalCode | string,
   message: string,
-  safeAlternative: string
+  safeAlternative: string,
+  details?: Pick<RefusalReason, "matchIndex" | "contextSnippet">
 ): RefusalReason => ({
   code,
   message,
   safeAlternative,
+  ...details,
 });
 
 const buildRefusalResponse = (
@@ -912,6 +914,13 @@ const generateCalc = async (
 
   const generationSystem = [
     "You generate a single-file offline calculator HTML artifact for PromptCalc.",
+    "Return JSON only. No markdown. No prose.",
+    "Do not use eval(), new Function(...), or Function(...).",
+    "Do not generate any dynamic code execution.",
+    "Do not generate any <script src=...>, <link ...>, @import, or url(...).",
+    "All logic must be implemented with ordinary named functions and event listeners (e.g., addEventListener).",
+    "No network access. No connect-src usage beyond 'none'.",
+    "If you need to compute expressions, implement a fixed parser for + - * / and parentheses, or limit operations to explicit buttons/fields; never use Function/eval.",
     "Rules:",
     "- Output must be a single HTML file and a manifest JSON object.",
     "- Output MUST be a single JSON object with no markdown, code fences, or commentary.",
@@ -931,67 +940,110 @@ const generateCalc = async (
     "{\"artifactHtml\":\"<!doctype html>...\",\"manifest\":{\"specVersion\":\"1.0\",\"title\":\"...\",\"executionModel\":\"static\",\"capabilities\":{\"network\":false}}}",
   ].join("\\n");
 
-  const generationUser = [
-    "Prompt:",
-    prompt,
-    "",
-    "If you need a title, use a short descriptive one.",
-  ].join("\\n");
+  const retryNotice =
+    'Your previous output included the banned token "Function(" (Function constructor). Regenerate without it. Use only normal functions and explicit arithmetic; no eval/new Function/Function.';
 
-  const repairUser = [
-    "You returned invalid JSON. Return ONLY valid JSON for this schema. No extra text.",
-    "Prompt:",
-    prompt,
-  ].join("\\n");
+  const buildGenerationUser = (promptText: string, retryLine?: string): string => {
+    const lines = [
+      "Prompt:",
+      promptText,
+      "",
+      "If you need a title, use a short descriptive one.",
+    ];
+    if (retryLine) {
+      lines.push("", retryLine);
+    }
+    return lines.join("\\n");
+  };
 
-  let generationResult: ArtifactGenerationResponse | null = null;
-  try {
-    const generationResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
-      traceId,
-      openAIConfig,
-      {
-        input: [
-          { role: "system", content: [{ type: "input_text", text: generationSystem }] },
-          { role: "user", content: [{ type: "input_text", text: generationUser }] },
-        ],
-        response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
-      },
-      "openai.artifact.generate",
-      { maxAttempts: 2 }
-    );
+  const buildRepairUser = (promptText: string, retryLine?: string): string => {
+    const lines = [
+      "You returned invalid JSON. Return ONLY valid JSON for this schema. No extra text.",
+      "Prompt:",
+      promptText,
+    ];
+    if (retryLine) {
+      lines.push("", retryLine);
+    }
+    return lines.join("\\n");
+  };
 
-    generationResult = generationResponse.parsed;
-  } catch (error) {
-    if (error instanceof OpenAIParseError) {
-      try {
-        const repairResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
-          traceId,
-          openAIConfig,
-          {
-            input: [
-              { role: "system", content: [{ type: "input_text", text: generationSystem }] },
-              { role: "user", content: [{ type: "input_text", text: repairUser }] },
-            ],
-            response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
-          },
-          "openai.artifact.generate.repair",
-          { maxAttempts: 1 }
-        );
-        generationResult = repairResponse.parsed;
-      } catch (repairError) {
-        if (repairError instanceof OpenAIBadRequestError) {
-          return buildOpenAIBadRequestResponse(traceId, 502);
-        }
-        if (repairError instanceof OpenAIParseError) {
+  const generationUser = buildGenerationUser(prompt);
+  const repairUser = buildRepairUser(prompt);
+  const retryUser = buildGenerationUser(prompt, retryNotice);
+  const retryRepairUser = buildRepairUser(prompt, retryNotice);
+
+  const runArtifactGeneration = async (
+    userText: string,
+    repairText: string,
+    opName: string
+  ): Promise<{ result?: ArtifactGenerationResponse; response?: HttpResponseInit }> => {
+    let generationResult: ArtifactGenerationResponse | null = null;
+    try {
+      const generationResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
+        traceId,
+        openAIConfig,
+        {
+          input: [
+            { role: "system", content: [{ type: "input_text", text: generationSystem }] },
+            { role: "user", content: [{ type: "input_text", text: userText }] },
+          ],
+          response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+        },
+        opName,
+        { maxAttempts: 2 }
+      );
+
+      generationResult = generationResponse.parsed;
+    } catch (error) {
+      if (error instanceof OpenAIParseError) {
+        try {
+          const repairResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
+            traceId,
+            openAIConfig,
+            {
+              input: [
+                { role: "system", content: [{ type: "input_text", text: generationSystem }] },
+                { role: "user", content: [{ type: "input_text", text: repairText }] },
+              ],
+              response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+            },
+            `${opName}.repair`,
+            { maxAttempts: 1 }
+          );
+          generationResult = repairResponse.parsed;
+        } catch (repairError) {
+          if (repairError instanceof OpenAIBadRequestError) {
+            return { response: buildOpenAIBadRequestResponse(traceId, 502) };
+          }
+          if (repairError instanceof OpenAIParseError) {
+            logEvent({
+              level: "warn",
+              op,
+              traceId,
+              event: "artifact.generate.parse_failed",
+              message: repairError.message,
+            });
+            return { response: buildOpenAIParseFailedResponse(traceId) };
+          }
+          const reason = buildRefusalReason(
+            "OPENAI_ERROR",
+            "Artifact generation failed.",
+            "Try a simpler offline calculator prompt."
+          );
           logEvent({
-            level: "warn",
+            level: "error",
             op,
             traceId,
-            event: "artifact.generate.parse_failed",
-            message: repairError.message,
+            event: "artifact.generate.failed",
+            message: repairError instanceof Error ? repairError.message : "unknown error",
           });
-          return buildOpenAIParseFailedResponse(traceId);
+          return { response: buildRefusalResponse(traceId, 502, reason) };
         }
+      } else if (error instanceof OpenAIBadRequestError) {
+        return { response: buildOpenAIBadRequestResponse(traceId, 502) };
+      }
+      if (!(error instanceof OpenAIParseError)) {
         const reason = buildRefusalReason(
           "OPENAI_ERROR",
           "Artifact generation failed.",
@@ -1002,144 +1054,171 @@ const generateCalc = async (
           op,
           traceId,
           event: "artifact.generate.failed",
-          message: repairError instanceof Error ? repairError.message : "unknown error",
+          message: error instanceof Error ? error.message : "unknown error",
         });
-        return buildRefusalResponse(traceId, 502, reason);
+        return { response: buildRefusalResponse(traceId, 502, reason) };
       }
-    } else if (error instanceof OpenAIBadRequestError) {
-      return buildOpenAIBadRequestResponse(traceId, 502);
-    }
-    if (!(error instanceof OpenAIParseError)) {
-      const reason = buildRefusalReason(
-        "OPENAI_ERROR",
-        "Artifact generation failed.",
-        "Try a simpler offline calculator prompt."
-      );
       logEvent({
-        level: "error",
+        level: "warn",
         op,
         traceId,
-        event: "artifact.generate.failed",
-        message: error instanceof Error ? error.message : "unknown error",
+        event: "artifact.generate.parse_failed",
+        message: error.message,
       });
+      return { response: buildOpenAIParseFailedResponse(traceId) };
+    }
+
+    return { result: generationResult ?? undefined };
+  };
+
+  const generationAttempts = [
+    { userText: generationUser, repairText: repairUser, opName: "openai.artifact.generate" },
+    { userText: retryUser, repairText: retryRepairUser, opName: "openai.artifact.generate.retry" },
+  ];
+
+  let finalManifest: Record<string, unknown> | null = null;
+  let finalHtml = "";
+  let finalArtifactBytes = 0;
+  let artifactBytes = 0;
+
+  for (let attempt = 0; attempt < generationAttempts.length; attempt += 1) {
+    const { userText, repairText, opName } = generationAttempts[attempt];
+    const generationOutcome = await runArtifactGeneration(userText, repairText, opName);
+    if (generationOutcome.response) {
+      return generationOutcome.response;
+    }
+    const generationResult = generationOutcome.result;
+
+    if (
+      !generationResult ||
+      typeof generationResult.artifactHtml !== "string" ||
+      !generationResult.manifest ||
+      typeof generationResult.manifest !== "object"
+    ) {
+      const reason = buildRefusalReason(
+        "INVALID_MODEL_OUTPUT",
+        `Artifact generation returned invalid data. traceId=${traceId}`,
+        "Try a simpler offline calculator prompt."
+      );
       return buildRefusalResponse(traceId, 502, reason);
     }
+
+    if (
+      "error" in generationResult &&
+      (generationResult as { error?: unknown }).error === "REFUSE"
+    ) {
+      const reason = buildRefusalReason(
+        "MODEL_REFUSED",
+        `Artifact generation refused. traceId=${traceId}`,
+        "Try a simpler offline calculator prompt."
+      );
+      return buildRefusalResponse(traceId, 200, reason);
+    }
+
+    artifactBytes = Buffer.byteLength(generationResult.artifactHtml, "utf8");
+    if (artifactBytes > config.maxArtifactBytes) {
+      const reason = buildRefusalReason(
+        "TOO_LARGE_ARTIFACT",
+        "Generated artifact exceeds size limits.",
+        "Request a smaller, simpler calculator layout."
+      );
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.tooLarge",
+        artifactBytes,
+        maxArtifactBytes: config.maxArtifactBytes,
+      });
+      return buildRefusalResponse(traceId, 200, reason);
+    }
+
+    if (!isValidManifest(generationResult.manifest)) {
+      const reason = buildRefusalReason(
+        "INVALID_MODEL_OUTPUT",
+        `Artifact manifest missing required fields. traceId=${traceId}`,
+        "Try a simpler offline calculator prompt."
+      );
+      return buildRefusalResponse(traceId, 502, reason);
+    }
+
+    const baseManifest = {
+      ...generationResult.manifest,
+      capabilities: { network: false },
+      hash: "",
+    } as Record<string, unknown>;
+    const placeholderHtml = embedManifestInHtml(generationResult.artifactHtml, baseManifest);
+    const manifestHash = computeSha256(placeholderHtml);
+    finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
+    finalHtml = embedManifestInHtml(generationResult.artifactHtml, finalManifest);
+
+    finalArtifactBytes = Buffer.byteLength(finalHtml, "utf8");
+    if (finalArtifactBytes > config.maxArtifactBytes) {
+      const reason = buildRefusalReason(
+        "TOO_LARGE_ARTIFACT",
+        "Generated artifact exceeds size limits.",
+        "Request a smaller, simpler calculator layout."
+      );
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.tooLarge",
+        artifactBytes: finalArtifactBytes,
+        maxArtifactBytes: config.maxArtifactBytes,
+      });
+      return buildRefusalResponse(traceId, 200, reason);
+    }
+
+    const scanResult = scanArtifactHtml(finalHtml, policy);
+    if (!scanResult.ok) {
+      const reason = buildRefusalReason(
+        scanResult.code,
+        scanResult.message,
+        "Use a simple offline calculator without external data or scripts.",
+        {
+          matchIndex: scanResult.matchIndex,
+          contextSnippet: scanResult.contextSnippet,
+        }
+      );
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.scan.failed",
+        ruleId: scanResult.ruleId,
+        code: scanResult.code,
+        matchIndex: scanResult.matchIndex,
+        contextSnippet: scanResult.contextSnippet,
+      });
+      const shouldRetry =
+        attempt === 0 &&
+        scanResult.code === "DISALLOWED_PATTERN" &&
+        scanResult.ruleId?.includes("Function(");
+      if (shouldRetry) {
+        continue;
+      }
+      return buildRefusalResponse(traceId, 200, reason);
+    }
+
     logEvent({
-      level: "warn",
+      level: "info",
       op,
       traceId,
-      event: "artifact.generate.parse_failed",
-      message: error.message,
-    });
-    return buildOpenAIParseFailedResponse(traceId);
-  }
-
-  if (
-    !generationResult ||
-    typeof generationResult.artifactHtml !== "string" ||
-    !generationResult.manifest ||
-    typeof generationResult.manifest !== "object"
-  ) {
-    const reason = buildRefusalReason(
-      "INVALID_MODEL_OUTPUT",
-      `Artifact generation returned invalid data. traceId=${traceId}`,
-      "Try a simpler offline calculator prompt."
-    );
-    return buildRefusalResponse(traceId, 502, reason);
-  }
-
-  if (
-    "error" in generationResult &&
-    (generationResult as { error?: unknown }).error === "REFUSE"
-  ) {
-    const reason = buildRefusalReason(
-      "MODEL_REFUSED",
-      `Artifact generation refused. traceId=${traceId}`,
-      "Try a simpler offline calculator prompt."
-    );
-    return buildRefusalResponse(traceId, 200, reason);
-  }
-
-  const artifactBytes = Buffer.byteLength(generationResult.artifactHtml, "utf8");
-  if (artifactBytes > config.maxArtifactBytes) {
-    const reason = buildRefusalReason(
-      "TOO_LARGE_ARTIFACT",
-      "Generated artifact exceeds size limits.",
-      "Request a smaller, simpler calculator layout."
-    );
-    logEvent({
-      level: "warn",
-      op,
-      traceId,
-      event: "artifact.tooLarge",
-      artifactBytes,
-      maxArtifactBytes: config.maxArtifactBytes,
-    });
-    return buildRefusalResponse(traceId, 200, reason);
-  }
-
-  if (!isValidManifest(generationResult.manifest)) {
-    const reason = buildRefusalReason(
-      "INVALID_MODEL_OUTPUT",
-      `Artifact manifest missing required fields. traceId=${traceId}`,
-      "Try a simpler offline calculator prompt."
-    );
-    return buildRefusalResponse(traceId, 502, reason);
-  }
-
-  const baseManifest = {
-    ...generationResult.manifest,
-    capabilities: { network: false },
-    hash: "",
-  } as Record<string, unknown>;
-  const placeholderHtml = embedManifestInHtml(generationResult.artifactHtml, baseManifest);
-  const manifestHash = computeSha256(placeholderHtml);
-  const finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
-  const finalHtml = embedManifestInHtml(generationResult.artifactHtml, finalManifest);
-
-  const finalArtifactBytes = Buffer.byteLength(finalHtml, "utf8");
-  if (finalArtifactBytes > config.maxArtifactBytes) {
-    const reason = buildRefusalReason(
-      "TOO_LARGE_ARTIFACT",
-      "Generated artifact exceeds size limits.",
-      "Request a smaller, simpler calculator layout."
-    );
-    logEvent({
-      level: "warn",
-      op,
-      traceId,
-      event: "artifact.tooLarge",
+      event: "artifact.scan.passed",
       artifactBytes: finalArtifactBytes,
-      maxArtifactBytes: config.maxArtifactBytes,
     });
-    return buildRefusalResponse(traceId, 200, reason);
+    break;
   }
 
-  const scanResult = scanArtifactHtml(finalHtml, policy);
-  if (!scanResult.ok) {
+  if (!finalManifest) {
     const reason = buildRefusalReason(
-      scanResult.code,
-      scanResult.message,
-      "Use a simple offline calculator without external data or scripts."
+      "INVALID_MODEL_OUTPUT",
+      `Artifact generation did not produce a valid manifest. traceId=${traceId}`,
+      "Try a simpler offline calculator prompt."
     );
-    logEvent({
-      level: "warn",
-      op,
-      traceId,
-      event: "artifact.scan.failed",
-      ruleId: scanResult.ruleId,
-      code: scanResult.code,
-    });
-    return buildRefusalResponse(traceId, 200, reason);
+    return buildRefusalResponse(traceId, 502, reason);
   }
-
-  logEvent({
-    level: "info",
-    op,
-    traceId,
-    event: "artifact.scan.passed",
-    artifactBytes: finalArtifactBytes,
-  });
 
   try {
     const codeScanSystem = [
