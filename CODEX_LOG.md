@@ -6,6 +6,17 @@ Security Risks: None.
 
 # CODEX Log
 
+## 2026-02-05
+**Summary**
+- Aligned AI artifact scan rubric with sandbox policy to allow inline JS, postMessage, and unsafe-inline CSP while still refusing true violations.
+- Added AI scan policy handling tests and updated status/decision notes.
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- Verify CNC calculator prompts no longer fail AI_SCAN_FAILED when only inline JS/postMessage/unsafe-inline are present.
+
 ## 2026-02-04
 **Summary**
 - Added continuity documentation (status, decisions, prompts, runbook, codex log).
