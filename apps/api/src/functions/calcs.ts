@@ -23,7 +23,12 @@ import {
   buildGenerateRefusedResponse,
   type RefusalReason,
 } from "../generation/response";
-import { callOpenAIResponses, OpenAIBadRequestError, OpenAIParseError } from "../openai/client";
+import {
+  callOpenAIResponses,
+  OpenAIBadRequestError,
+  OpenAIParseError,
+  type OpenAIJsonSchemaResponseFormat,
+} from "../openai/client";
 import { getPromptCalcPolicy } from "../policy/policy";
 import { scanArtifactHtml } from "../policy/scanner";
 import { getTraceId } from "../trace";
@@ -134,6 +139,12 @@ const buildOpenAIBadRequestResponse = (traceId: string, status: number): HttpRes
     traceId,
   });
 
+const buildOpenAIParseFailedResponse = (traceId: string): HttpResponseInit =>
+  jsonResponse(traceId, 502, {
+    code: "OPENAI_PARSE_FAILED",
+    traceId,
+  });
+
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 401, {
     code: "UNAUTHORIZED",
@@ -189,6 +200,62 @@ const listToString = (value: unknown): string => {
 
 const getObjectKeys = (value: unknown): string[] =>
   value && typeof value === "object" ? Object.keys(value as Record<string, unknown>) : [];
+
+const buildJsonSchemaResponseFormat = (
+  name: string,
+  schema: Record<string, unknown>
+): OpenAIJsonSchemaResponseFormat => ({
+  type: "json_schema",
+  json_schema: {
+    name,
+    schema,
+    strict: true,
+  },
+});
+
+const promptScanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    allowed: { type: "boolean" },
+    refusalCode: { type: "string" },
+    reason: { type: "string" },
+    safeAlternative: { type: "string" },
+  },
+  required: ["allowed", "reason", "safeAlternative"],
+};
+
+const generationSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    artifactHtml: { type: "string" },
+    manifest: {
+      type: "object",
+      additionalProperties: true,
+    },
+    notes: { type: "string" },
+  },
+  required: ["artifactHtml", "manifest"],
+};
+
+const codeScanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    isSafe: { type: "boolean" },
+    safe: { type: "boolean" },
+    issues: {
+      type: "array",
+      items: { type: "string" },
+    },
+    findings: {
+      type: "array",
+      items: { type: "string" },
+    },
+  },
+  required: ["isSafe"],
+};
 
 const logTableError = (
   traceId: string,
@@ -764,54 +831,66 @@ const generateCalc = async (
 
     let promptDecision: PromptScanDecision;
     try {
-    const promptScanSystem = [
-      "You are a strict policy classifier for PromptCalc generation prompts.",
-      "Disallow any intent that requests:",
-      "- networking, URL fetching, scraping, or external data sources",
-      "- external dependencies or CDN scripts",
-      "- credential capture (login pages, password inputs)",
-      "- analytics, tracking, or user fingerprinting",
-      "- attempts to escape the sandboxed iframe (top navigation, popups)",
-      "- eval/dynamic code generation requests",
-      "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
-      "Return a JSON object that conforms exactly to the schema.",
-      "If disallowed, set allowed=false and set refusalCode to the best matching policy code.",
-    ].join("\\n");
+      const promptScanSystem = [
+        "You are a strict policy classifier for PromptCalc generation prompts.",
+        "Disallow any intent that requests:",
+        "- networking, URL fetching, scraping, or external data sources",
+        "- external dependencies or CDN scripts",
+        "- credential capture (login pages, password inputs)",
+        "- analytics, tracking, or user fingerprinting",
+        "- attempts to escape the sandboxed iframe (top navigation, popups)",
+        "- eval/dynamic code generation requests",
+        "Return JSON only. No markdown. No prose.",
+        "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
+        "Return a JSON object that conforms exactly to the schema.",
+        "If disallowed, set allowed=false and set refusalCode to the best matching policy code.",
+      ].join("\\n");
 
-    const promptScanUser = `Prompt:\\n${prompt}`;
+      const promptScanUser = `Prompt:\\n${prompt}`;
 
-    const promptScanResult = await callOpenAIResponses<PromptScanDecision>(
-      traceId,
-      openAIConfig,
-      {
-        input: [
-          { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
-          { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
-        ],
-        max_output_tokens: 350,
-      },
-      "openai.prompt.scan"
-    );
+      const promptScanResult = await callOpenAIResponses<PromptScanDecision>(
+        traceId,
+        openAIConfig,
+        {
+          input: [
+            { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
+            { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
+          ],
+          max_output_tokens: 350,
+          response_format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
+        },
+        "openai.prompt.scan"
+      );
 
-    promptDecision = promptScanResult.parsed;
-  } catch (error) {
-    if (error instanceof OpenAIBadRequestError) {
-      return buildOpenAIBadRequestResponse(traceId, 502);
+      promptDecision = promptScanResult.parsed;
+    } catch (error) {
+      if (error instanceof OpenAIBadRequestError) {
+        return buildOpenAIBadRequestResponse(traceId, 502);
+      }
+      if (error instanceof OpenAIParseError) {
+        logEvent({
+          level: "warn",
+          op,
+          traceId,
+          event: "prompt.scan.parse_failed",
+          message: error.message,
+        });
+        return buildOpenAIParseFailedResponse(traceId);
+      }
+      const reason = buildRefusalReason(
+        "OPENAI_ERROR",
+        "Prompt classification failed.",
+        "Try a simpler offline calculator prompt."
+      );
+      logEvent({
+        level: "error",
+        op,
+        traceId,
+        event: "prompt.scan.failed",
+        message: error instanceof Error ? error.message : "unknown error",
+      });
+      return buildRefusalResponse(traceId, 502, reason);
     }
-    const reason = buildRefusalReason(
-      "OPENAI_ERROR",
-      "Prompt classification failed.",
-      "Try a simpler offline calculator prompt."
-    );
-    logEvent({
-      level: "error",
-      op,
-      traceId,
-      event: "prompt.scan.failed",
-      message: error instanceof Error ? error.message : "unknown error",
-    });
-    return buildRefusalResponse(traceId, 502, reason);
-  }
 
   logEvent({
     level: "info",
@@ -836,6 +915,7 @@ const generateCalc = async (
     "Rules:",
     "- Output must be a single HTML file and a manifest JSON object.",
     "- Output MUST be a single JSON object with no markdown, code fences, or commentary.",
+    "- Return JSON only. No markdown. No prose.",
     "- If you cannot comply, output exactly: {\"error\":\"REFUSE\"}.",
     "- Include a CSP meta tag with: default-src 'none'; connect-src 'none'; img-src 'none';",
     "  script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'.",
@@ -874,6 +954,7 @@ const generateCalc = async (
           { role: "system", content: [{ type: "input_text", text: generationSystem }] },
           { role: "user", content: [{ type: "input_text", text: generationUser }] },
         ],
+        response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
       },
       "openai.artifact.generate",
       { maxAttempts: 2 }
@@ -891,6 +972,7 @@ const generateCalc = async (
               { role: "system", content: [{ type: "input_text", text: generationSystem }] },
               { role: "user", content: [{ type: "input_text", text: repairUser }] },
             ],
+            response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
           },
           "openai.artifact.generate.repair",
           { maxAttempts: 1 }
@@ -899,6 +981,16 @@ const generateCalc = async (
       } catch (repairError) {
         if (repairError instanceof OpenAIBadRequestError) {
           return buildOpenAIBadRequestResponse(traceId, 502);
+        }
+        if (repairError instanceof OpenAIParseError) {
+          logEvent({
+            level: "warn",
+            op,
+            traceId,
+            event: "artifact.generate.parse_failed",
+            message: repairError.message,
+          });
+          return buildOpenAIParseFailedResponse(traceId);
         }
         const reason = buildRefusalReason(
           "OPENAI_ERROR",
@@ -932,6 +1024,14 @@ const generateCalc = async (
       });
       return buildRefusalResponse(traceId, 502, reason);
     }
+    logEvent({
+      level: "warn",
+      op,
+      traceId,
+      event: "artifact.generate.parse_failed",
+      message: error.message,
+    });
+    return buildOpenAIParseFailedResponse(traceId);
   }
 
   if (
@@ -1046,6 +1146,7 @@ const generateCalc = async (
       "Review the HTML and decide if it is safe for an offline, sandboxed calculator.",
       "Flag any signs of networking, external dependencies, credential capture, eval/dynamic code,",
       "sandbox escapes, or navigation/popup attempts.",
+      "Return JSON only. No markdown. No prose.",
       "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
       "Return JSON matching the schema.",
     ].join("\\n");
@@ -1061,6 +1162,7 @@ const generateCalc = async (
           { role: "user", content: [{ type: "input_text", text: codeScanUser }] },
         ],
         max_output_tokens: 300,
+        response_format: buildJsonSchemaResponseFormat("ArtifactCodeScan", codeScanSchema),
       },
       "openai.artifact.scan"
     );
@@ -1107,12 +1209,13 @@ const generateCalc = async (
       }
     }
 
-    const parsedIssues = Array.isArray(scanDecision.parsed.issues)
-      ? scanDecision.parsed.issues
-      : Array.isArray(scanDecision.parsed.findings)
-        ? scanDecision.parsed.findings
+    const parsedDecision = scanDecision.parsed ?? {};
+    const parsedIssues = Array.isArray(parsedDecision.issues)
+      ? parsedDecision.issues
+      : Array.isArray(parsedDecision.findings)
+        ? parsedDecision.findings
         : [];
-    const isSafe = scanDecision.parsed.isSafe ?? scanDecision.parsed.safe;
+    const isSafe = parsedDecision.isSafe ?? parsedDecision.safe;
 
     if (parsedIssues.length > 0) {
       const reason = buildRefusalReason(

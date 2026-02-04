@@ -19,10 +19,20 @@ export type OpenAIInputContent = {
   text: string;
 };
 
+export type OpenAIJsonSchemaResponseFormat = {
+  type: "json_schema";
+  json_schema: {
+    name: string;
+    schema: Record<string, unknown>;
+    strict: boolean;
+  };
+};
+
 export type OpenAIRequest = {
   input: Array<{ role: "system" | "user"; content: OpenAIInputContent[] }>;
   max_output_tokens?: number;
   model?: string;
+  response_format?: OpenAIJsonSchemaResponseFormat;
 };
 
 export type OpenAIRequestOptions = {
@@ -178,6 +188,7 @@ export const callOpenAIResponses = async <T>(
     model: requestBody.model ?? config.model,
     input: requestBody.input,
     max_output_tokens: requestBody.max_output_tokens ?? config.maxTokens,
+    response_format: requestBody.response_format,
   };
   const body = JSON.stringify(requestPayload);
 
