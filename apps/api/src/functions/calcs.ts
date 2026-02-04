@@ -455,7 +455,7 @@ const saveCalc = async (
   const versionEntity: CalculatorVersionEntity = {
     partitionKey: String(buildVersionPartition(userId, calcId)),
     rowKey: String(buildVersionRow(versionId)),
-    entityType: String("CalculatorVersion"),
+    entityType: "CalculatorVersion",
     userId: String(userId),
     calcId: String(calcId),
     versionId: String(versionId),
