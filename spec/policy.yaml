@@ -4,6 +4,7 @@
 specVersion: "1.1"
 maxArtifactBytes: 200000
 requiredBannerText: "Generated calculator (offline). Do not enter passwords."
+requiredReadyMarker: "promptcalc-ready"
 requiredCspDirectives:
   - "default-src 'none'"
   - "connect-src 'none'"

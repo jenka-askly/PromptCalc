@@ -65,6 +65,14 @@ export const scanArtifactHtml = (
     };
   }
 
+  if (!normalizedHtml.includes(normalize(policy.requiredReadyMarker))) {
+    return {
+      ok: false,
+      code: "MISSING_READY_BOOTSTRAP",
+      message: "Artifact is missing the readiness bootstrap marker.",
+    };
+  }
+
   for (const rule of policy.bannedPatterns) {
     const patterns = rule.patterns ?? [];
     for (const pattern of patterns) {
