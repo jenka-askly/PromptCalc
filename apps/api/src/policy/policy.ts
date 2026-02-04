@@ -20,6 +20,7 @@ export type PromptCalcPolicy = {
   specVersion: string;
   maxArtifactBytes: number;
   requiredBannerText: string;
+  requiredReadyMarker: string;
   requiredCspDirectives: string[];
   bannedPatterns: PolicyRule[];
   bannedTags: PolicyRule[];
@@ -36,6 +37,7 @@ const DEFAULT_POLICY: PromptCalcPolicy = {
   specVersion: "1.0",
   maxArtifactBytes: 200_000,
   requiredBannerText: "Generated calculator (offline). Do not enter passwords.",
+  requiredReadyMarker: "promptcalc-ready",
   requiredCspDirectives: [
     "default-src 'none'",
     "connect-src 'none'",
@@ -131,6 +133,10 @@ const loadPolicyFromFile = async (policyPath: string): Promise<PromptCalcPolicy>
       typeof parsed.requiredBannerText === "string"
         ? parsed.requiredBannerText
         : normalizedRequired.requiredBannerText,
+    requiredReadyMarker:
+      typeof parsed.requiredReadyMarker === "string"
+        ? parsed.requiredReadyMarker
+        : DEFAULT_POLICY.requiredReadyMarker,
     requiredCspDirectives: Array.isArray(parsed.requiredCspDirectives)
       ? parsed.requiredCspDirectives
       : normalizedRequired.requiredCspDirectives,

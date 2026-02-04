@@ -374,6 +374,47 @@ const embedManifestInHtml = (
   return `${artifactHtml}\n${scriptTag}`;
 };
 
+const READY_BOOTSTRAP_ID = "promptcalc-ready";
+const READY_BOOTSTRAP_SCRIPT =
+  "<script id=\"promptcalc-ready\">(function(){const sendReady=()=>{try{window.parent.postMessage({type:\"ready\"},\"*\");}catch{}};const handlePing=(event)=>{try{if(event&&event.data&&event.data.type===\"ping\"){window.parent.postMessage({type:\"pong\"},\"*\");}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",sendReady,{once:true});}else{sendReady();}window.addEventListener(\"message\",handlePing);})();</script>";
+const READY_BOOTSTRAP_REGEX = new RegExp(
+  `<script[^>]*id=["']${READY_BOOTSTRAP_ID}["'][^>]*>`,
+  "i"
+);
+const CSP_META_REGEX = new RegExp(
+  "<meta[^>]+http-equiv=[\"']Content-Security-Policy[\"'][^>]*>",
+  "i"
+);
+
+const ensureReadyBootstrap = (artifactHtml: string): string => {
+  if (READY_BOOTSTRAP_REGEX.test(artifactHtml)) {
+    return artifactHtml;
+  }
+
+  if (CSP_META_REGEX.test(artifactHtml)) {
+    return artifactHtml.replace(
+      CSP_META_REGEX,
+      (match) => `${match}${READY_BOOTSTRAP_SCRIPT}`
+    );
+  }
+
+  if (/<head[^>]*>/i.test(artifactHtml)) {
+    return artifactHtml.replace(
+      /<head[^>]*>/i,
+      (match) => `${match}${READY_BOOTSTRAP_SCRIPT}`
+    );
+  }
+
+  if (/<body[^>]*>/i.test(artifactHtml)) {
+    return artifactHtml.replace(
+      /<body[^>]*>/i,
+      (match) => `${match}${READY_BOOTSTRAP_SCRIPT}`
+    );
+  }
+
+  return `${READY_BOOTSTRAP_SCRIPT}${artifactHtml}`;
+};
+
 const computeSha256 = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex");
 
@@ -626,7 +667,8 @@ const saveCalc = async (
     });
   }
 
-  const artifactBytes = Buffer.byteLength(body.artifactHtml, "utf8");
+  const artifactHtml = ensureReadyBootstrap(body.artifactHtml);
+  const artifactBytes = Buffer.byteLength(artifactHtml, "utf8");
   const maxArtifactBytes = await getMaxArtifactBytes();
   if (artifactBytes > maxArtifactBytes) {
     const durationMs = Date.now() - startedAt;
@@ -649,7 +691,7 @@ const saveCalc = async (
   const calcId = normalizeId(body.calcId || randomUUID());
   const versionId = normalizeId(randomUUID());
   const nowIso = new Date().toISOString();
-  const artifactHash = createHash("sha256").update(body.artifactHtml, "utf8").digest("hex");
+  const artifactHash = createHash("sha256").update(artifactHtml, "utf8").digest("hex");
   const promptValue = typeof body.prompt === "string" ? body.prompt : undefined;
   const promptLen = promptValue ? promptValue.length : 0;
   const blobPath = getBlobPath(userId, calcId, versionId);
@@ -693,7 +735,7 @@ const saveCalc = async (
   };
 
   try {
-    await persistArtifactBlob(traceId, blobPath.artifact, body.artifactHtml);
+    await persistArtifactBlob(traceId, blobPath.artifact, artifactHtml);
     await persistManifestBlob(traceId, blobPath.manifest, body.manifest);
     await persistCalculatorVersionEntity(traceId, versionEntity);
     await persistCalculatorEntity(traceId, calculatorEntity);
@@ -933,6 +975,9 @@ const generateCalc = async (
     "- Include this banner text in the body: \"Generated calculator (offline). Do not enter passwords.\"",
     "- Embed the manifest JSON in the HTML inside:",
     "  <script type=\"application/json\" id=\"promptcalc-manifest\">...</script>.",
+    "- Include a readiness bootstrap script with id=\"promptcalc-ready\" that posts",
+    "  window.parent.postMessage({type:\"ready\"}, \"*\") after DOMContentLoaded.",
+    "  It should also respond to {type:\"ping\"} with {type:\"pong\"}.",
     "- The manifest capabilities.network must be false.",
     "- Do not refuse; classifier already handled refusals.",
     "Return JSON that exactly matches the schema.",
@@ -1151,10 +1196,11 @@ const generateCalc = async (
       capabilities: { network: false },
       hash: "",
     } as Record<string, unknown>;
-    const placeholderHtml = embedManifestInHtml(generationResult.artifactHtml, baseManifest);
+    const readyHtml = ensureReadyBootstrap(generationResult.artifactHtml);
+    const placeholderHtml = embedManifestInHtml(readyHtml, baseManifest);
     const manifestHash = computeSha256(placeholderHtml);
     finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
-    finalHtml = embedManifestInHtml(generationResult.artifactHtml, finalManifest);
+    finalHtml = embedManifestInHtml(readyHtml, finalManifest);
 
     finalArtifactBytes = Buffer.byteLength(finalHtml, "utf8");
     if (finalArtifactBytes > config.maxArtifactBytes) {

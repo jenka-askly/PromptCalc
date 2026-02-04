@@ -19,10 +19,46 @@ interface CalculatorViewerProps {
 
 const DEFAULT_TIMEOUT_MS = 4000;
 
+const READY_BOOTSTRAP_ID = "promptcalc-ready";
+const READY_BOOTSTRAP_SCRIPT =
+  "<script id=\"promptcalc-ready\">(function(){const sendReady=()=>{try{window.parent.postMessage({type:\"ready\"},\"*\");}catch{}};const handlePing=(event)=>{try{if(event&&event.data&&event.data.type===\"ping\"){window.parent.postMessage({type:\"pong\"},\"*\");}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",sendReady,{once:true});}else{sendReady();}window.addEventListener(\"message\",handlePing);})();</script>";
+const READY_BOOTSTRAP_REGEX = new RegExp(
+  `<script[^>]*id=["']${READY_BOOTSTRAP_ID}["'][^>]*>`,
+  "i"
+);
+
+const ensureReadyBootstrap = (artifactHtml: string, cspMetaRegex: RegExp): string => {
+  if (READY_BOOTSTRAP_REGEX.test(artifactHtml)) {
+    return artifactHtml;
+  }
+
+  if (cspMetaRegex.test(artifactHtml)) {
+    return artifactHtml.replace(
+      cspMetaRegex,
+      (match) => `${match}${READY_BOOTSTRAP_SCRIPT}`
+    );
+  }
+
+  if (/<head[^>]*>/i.test(artifactHtml)) {
+    return artifactHtml.replace(
+      /<head[^>]*>/i,
+      (match) => `${match}${READY_BOOTSTRAP_SCRIPT}`
+    );
+  }
+
+  if (/<body[^>]*>/i.test(artifactHtml)) {
+    return artifactHtml.replace(
+      /<body[^>]*>/i,
+      (match) => `${match}${READY_BOOTSTRAP_SCRIPT}`
+    );
+  }
+
+  return `${READY_BOOTSTRAP_SCRIPT}${artifactHtml}`;
+};
+
 const buildSrcDoc = (artifactHtml: string, csp: string): string => {
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${csp}">`;
-  const cspMetaRegex =
-    /<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/gi;
+  const cspMetaRegex = /<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/i;
 
   let html = artifactHtml;
 
@@ -34,7 +70,7 @@ const buildSrcDoc = (artifactHtml: string, csp: string): string => {
     html = `${cspMeta}${html}`;
   }
 
-  return html;
+  return ensureReadyBootstrap(html, cspMetaRegex);
 };
 
 const buildBlankDoc = (): string => "<!doctype html><html><body></body></html>";

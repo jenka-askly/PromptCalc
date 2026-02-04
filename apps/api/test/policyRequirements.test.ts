@@ -11,6 +11,7 @@ import { scanArtifactHtml } from "../src/policy/scanner";
 
 const cspMeta =
   "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src 'none'; img-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'\">";
+const readyBootstrap = "<script id=\"promptcalc-ready\">window.parent.postMessage({type:\"ready\"},\"*\");</script>";
 
 describe("scanArtifactHtml safety requirements", () => {
   it("fails when CSP meta is missing", async () => {
@@ -35,8 +36,18 @@ describe("scanArtifactHtml safety requirements", () => {
 
   it("passes when CSP and banner are present", async () => {
     const policy = await getPromptCalcPolicy();
-    const html = `<html><head>${cspMeta}</head><body>Generated calculator (offline). Do not enter passwords.</body></html>`;
+    const html = `<html><head>${cspMeta}${readyBootstrap}</head><body>Generated calculator (offline). Do not enter passwords.</body></html>`;
     const result = scanArtifactHtml(html, policy);
     expect(result.ok).toBe(true);
+  });
+
+  it("fails when readiness bootstrap is missing", async () => {
+    const policy = await getPromptCalcPolicy();
+    const html = `<html><head>${cspMeta}</head><body>Generated calculator (offline). Do not enter passwords.</body></html>`;
+    const result = scanArtifactHtml(html, policy);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("MISSING_READY_BOOTSTRAP");
+    }
   });
 });
