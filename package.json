@@ -1,0 +1,27 @@
+{
+  "_fileHeader": {
+    "purpose": "Define the PromptCalc workspace layout, scripts, and shared tooling.",
+    "persists": "None.",
+    "securityRisks": "Running scripts can execute local tooling but does not handle secrets directly."
+  },
+  "name": "promptcalc",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/api",
+    "shared/*"
+  ],
+  "scripts": {
+    "predev": "npm --workspace shared/logger run build && npm --workspace shared/types run build",
+    "dev": "concurrently -k -n web,api -c blue,green \"npm:dev:web\" \"npm:dev:api\"",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:api": "npm --workspace apps/api run dev",
+    "build": "npm -ws --if-present run build",
+    "test": "node -e \"console.log('No tests configured yet.')\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  }
+}

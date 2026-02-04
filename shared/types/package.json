@@ -1,0 +1,15 @@
+{
+  "_fileHeader": {
+    "purpose": "Define shared TypeScript types for PromptCalc manifests and refusals.",
+    "persists": "None.",
+    "securityRisks": "Types describe data shape only; no sensitive handling."
+  },
+  "name": "@promptcalc/types",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "_fileHeader": {
+    "purpose": "Configure Azure Functions host settings for PromptCalc API.",
+    "persists": "None.",
+    "securityRisks": "Controls function runtime behavior; no secrets stored."
+  },
+  "version": "2.0"
+}

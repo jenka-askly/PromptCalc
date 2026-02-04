@@ -1,0 +1,23 @@
+{
+  "_fileHeader": {
+    "purpose": "Configure the PromptCalc Azure Functions API workspace package.",
+    "persists": "None.",
+    "securityRisks": "Runs local Functions host and depends on environment variables for auth stubs."
+  },
+  "name": "@promptcalc/api",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "dev": "func start --typescript",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "@promptcalc/logger": "file:../../shared/logger",
+    "@promptcalc/types": "file:../../shared/types"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

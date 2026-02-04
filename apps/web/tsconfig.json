@@ -1,0 +1,14 @@
+{
+  // Purpose: Configure TypeScript for the PromptCalc React frontend.
+  // Persists: None.
+  // Security Risks: None.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["vite/client"],
+    "noEmit": true
+  },
+  "include": ["src"]
+}
