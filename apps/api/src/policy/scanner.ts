@@ -12,20 +12,13 @@ export type ScanResult =
 
 const normalize = (value: string): string => value.toLowerCase();
 
-const findCspContent = (html: string): string | null => {
-  const metaMatch = html.match(
-    /<meta[^>]+http-equiv=["']content-security-policy["'][^>]+content=["']([^"']+)["'][^>]*>/i
-  );
-  return metaMatch ? metaMatch[1] : null;
-};
-
-const containsRequiredCspDirectives = (content: string, directives: string[]): boolean => {
-  const normalized = normalize(content);
-  return directives.every((directive) => normalized.includes(normalize(directive)));
-};
-
 const matchesPattern = (normalizedHtml: string, pattern: string): boolean =>
   normalizedHtml.includes(normalize(pattern));
+
+const hasRequiredCspMarkers = (normalizedHtml: string, directives: string[]): boolean => {
+  const markers = ["content-security-policy", ...directives];
+  return markers.every((marker) => normalizedHtml.includes(normalize(marker)));
+};
 
 export const scanArtifactHtml = (
   artifactHtml: string,
@@ -33,8 +26,7 @@ export const scanArtifactHtml = (
 ): ScanResult => {
   const normalizedHtml = normalize(artifactHtml);
 
-  const cspContent = findCspContent(artifactHtml);
-  if (!cspContent || !containsRequiredCspDirectives(cspContent, policy.requiredCspDirectives)) {
+  if (!hasRequiredCspMarkers(normalizedHtml, policy.requiredCspDirectives)) {
     return {
       ok: false,
       code: "MISSING_CSP",

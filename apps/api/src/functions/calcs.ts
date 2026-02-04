@@ -260,22 +260,24 @@ const embedManifestInHtml = (
 ): string => {
   const manifestJson = JSON.stringify(manifest, null, 2);
   const scriptTag = `<script type=\"application/json\" id=\"promptcalc-manifest\">${manifestJson}</script>`;
-  const manifestRegex =
-    /<script[^>]*id=[\"']promptcalc-manifest[\"'][^>]*>.*?<\\/script>/is;
+  const manifestRegex = new RegExp(
+    "<script[^>]*id=[\"']promptcalc-manifest[\"'][^>]*>.*?<\\\\/script>",
+    "is"
+  );
 
   if (manifestRegex.test(artifactHtml)) {
     return artifactHtml.replace(manifestRegex, scriptTag);
   }
 
-  if (artifactHtml.includes(\"</body>\")) {
-    return artifactHtml.replace(\"</body>\", `${scriptTag}</body>`);
+  if (artifactHtml.includes("</body>")) {
+    return artifactHtml.replace("</body>", `${scriptTag}</body>`);
   }
 
-  return `${artifactHtml}\\n${scriptTag}`;
+  return `${artifactHtml}\n${scriptTag}`;
 };
 
 const computeSha256 = (value: string): string =>
-  createHash(\"sha256\").update(value, \"utf8\").digest(\"hex\");
+  createHash("sha256").update(value, "utf8").digest("hex");
 
 const persistCalculatorEntity = async (
   traceId: string,
@@ -920,7 +922,7 @@ const generateCalc = async (
   } as Record<string, unknown>;
   const placeholderHtml = embedManifestInHtml(generationResult.artifactHtml, baseManifest);
   const manifestHash = computeSha256(placeholderHtml);
-  const finalManifest = { ...baseManifest, hash: manifestHash };
+  const finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
   const finalHtml = embedManifestInHtml(generationResult.artifactHtml, finalManifest);
 
   const artifactBytes = Buffer.byteLength(finalHtml, "utf8");
