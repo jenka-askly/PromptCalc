@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { partitionAiScanIssues } from "../src/generation/aiScan";
+import { evaluateAiScanPolicy, partitionAiScanIssues } from "../src/generation/aiScan";
 
 describe("AI scan policy handling", () => {
   it("treats inline JS, postMessage, and unsafe-inline CSP as allowed", () => {
@@ -55,5 +55,31 @@ describe("AI scan policy handling", () => {
     ]);
 
     expect(disallowed).toHaveLength(1);
+  });
+
+  it("does not fail on offline warning banner mentions", () => {
+    const { disallowed, ignored } = evaluateAiScanPolicy([
+      {
+        category: "credential_capture",
+        message: "Banner says: Do not enter passwords.",
+        evidence: "Do not enter passwords",
+      },
+    ]);
+
+    expect(disallowed).toHaveLength(0);
+    expect(ignored).toHaveLength(1);
+  });
+
+  it("does not fail on DOM event wiring misclassified as dynamic execution", () => {
+    const { disallowed, ignored } = evaluateAiScanPolicy([
+      {
+        category: "dynamic_code",
+        message: "Dynamic code execution via addEventListener",
+        evidence: "document.getElementById('btn').addEventListener('click', handler)",
+      },
+    ]);
+
+    expect(disallowed).toHaveLength(0);
+    expect(ignored).toHaveLength(1);
   });
 });

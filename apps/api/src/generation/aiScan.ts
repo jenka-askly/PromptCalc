@@ -110,6 +110,75 @@ export const stringifyAiScanIssueSummaries = (
 const normalizeCategory = (value: string): string =>
   value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 
+const buildIssueText = (summary: AiScanIssueSummary): string =>
+  [
+    summary.category,
+    summary.code,
+    summary.message,
+    summary.summary,
+    summary.evidence,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" | ");
+
+const OFFLINE_WARNING_REGEX = /do not enter passwords?/i;
+const DOM_EVENT_REGEX = /(addeventlistener|getelementbyid|queryselector)/i;
+const INLINE_JS_REGEX = /(inline script|inline javascript|\binline js\b)/i;
+const UNSAFE_INLINE_REGEX = /unsafe-inline/i;
+const POSTMESSAGE_REGEX = /postmessage/i;
+const DYNAMIC_EXECUTION_MISLABEL_REGEX = /(dynamic|execution|eval|code)/i;
+
+const isOfflineWarningBanner = (text: string): boolean => OFFLINE_WARNING_REGEX.test(text);
+
+const isDomEventDynamicMislabel = (text: string): boolean =>
+  DOM_EVENT_REGEX.test(text) && DYNAMIC_EXECUTION_MISLABEL_REGEX.test(text);
+
+const isNeverFailIssue = (text: string, normalizedCategory?: string): boolean => {
+  if (isOfflineWarningBanner(text)) {
+    return true;
+  }
+  if (isDomEventDynamicMislabel(text)) {
+    return true;
+  }
+  if (normalizedCategory && ALLOWED_AI_SCAN_CATEGORIES.has(normalizedCategory)) {
+    return true;
+  }
+  if (INLINE_JS_REGEX.test(text)) {
+    return true;
+  }
+  if (UNSAFE_INLINE_REGEX.test(text)) {
+    return true;
+  }
+  if (POSTMESSAGE_REGEX.test(text)) {
+    return true;
+  }
+  return false;
+};
+
+const NETWORKING_REGEX = /(fetch|xmlhttprequest|websocket|sendbeacon|eventsource)\b/i;
+const EXTERNAL_RESOURCE_REGEX = /(<script\s+src|<img\s+src|<link\s+href|@import|url\()/i;
+const DYNAMIC_CODE_REGEX =
+  /(eval\s*\(|new function\s*\(|settimeout\s*\(\s*['"]|setinterval\s*\(\s*['"]|createelement\s*\(\s*['"]script['"]\s*\))/i;
+const FUNCTION_CONSTRUCTOR_REGEX = /\bFunction\s*\(/;
+const NAVIGATION_REGEX = /(window\.open|top\.location|parent\.location|target=_top|location\.href\s*=)/i;
+const PASSWORD_INPUT_REGEX = /type\s*=\s*['"]password['"]|input[^>]+password/i;
+const LOGIN_FORM_REGEX = /(login|sign[-\s]?in|enter password)/i;
+const FORM_FIELD_REGEX = /(input|field|form)/i;
+const DATA_EXFILTRATION_REGEX = /(exfil|encode|base64|leak|transmit)/i;
+
+const isCredentialCapture = (text: string): boolean => {
+  if (isOfflineWarningBanner(text)) {
+    return false;
+  }
+  if (PASSWORD_INPUT_REGEX.test(text)) {
+    return true;
+  }
+  if (LOGIN_FORM_REGEX.test(text) && FORM_FIELD_REGEX.test(text)) {
+    return true;
+  }
+  return false;
+};
+
 export const DISALLOWED_AI_SCAN_CATEGORIES = new Set([
   "networking",
   "external_resource",
@@ -128,34 +197,34 @@ export const ALLOWED_AI_SCAN_CATEGORIES = new Set([
 
 const detectCategoryFromText = (text: string): string | undefined => {
   const normalized = text.toLowerCase();
-  if (/(fetch|xmlhttprequest|websocket|sendbeacon|eventsource)\b/.test(normalized)) {
+  if (NETWORKING_REGEX.test(normalized)) {
     return "networking";
   }
-  if (/(<script\s+src|<img\s+src|<link\s+href|@import|url\()/.test(normalized)) {
+  if (EXTERNAL_RESOURCE_REGEX.test(normalized)) {
     return "external_resource";
   }
-  if (/\beval\s*\(|\bnew function\b|\bfunction\s*\(/.test(normalized)) {
+  if (DYNAMIC_CODE_REGEX.test(normalized) || FUNCTION_CONSTRUCTOR_REGEX.test(text)) {
     return "dynamic_code";
   }
-  if (/(window\.open|top\.location|parent\.location|target=_top)/.test(normalized)) {
+  if (NAVIGATION_REGEX.test(normalized)) {
     return "navigation";
   }
-  if (/(password|credential|login|sign[-\s]?in)/.test(normalized)) {
+  if (isCredentialCapture(text)) {
     return "credential_capture";
   }
-  if (/(exfil|encode|base64|leak|transmit)/.test(normalized)) {
+  if (DATA_EXFILTRATION_REGEX.test(normalized)) {
     return "data_exfiltration";
   }
-  if (/postmessage/.test(normalized)) {
+  if (POSTMESSAGE_REGEX.test(normalized)) {
     return "postmessage";
   }
-  if (/(inline script|inline javascript)/.test(normalized)) {
+  if (INLINE_JS_REGEX.test(normalized)) {
     return "inline_script";
   }
   if (/inline event handler/.test(normalized)) {
     return "inline_event_handler";
   }
-  if (/unsafe-inline/.test(normalized)) {
+  if (UNSAFE_INLINE_REGEX.test(normalized)) {
     return "unsafe_inline_csp";
   }
   return undefined;
@@ -207,4 +276,101 @@ export const partitionAiScanIssues = (issues: unknown[]): AiScanIssuePartition =
   }
 
   return { disallowed, allowed, uncategorized };
+};
+
+export type AiScanPolicyDecision = {
+  disallowed: AiScanIssueSummary[];
+  allowed: AiScanIssueSummary[];
+  ignored: AiScanIssueSummary[];
+  uncategorized: AiScanIssueSummary[];
+};
+
+const coerceSummaryCategory = (
+  summary: AiScanIssueSummary,
+  fallbackText: string
+): string | undefined => {
+  const category = summary.category ? normalizeCategory(summary.category) : undefined;
+  return category ?? detectCategoryFromText(fallbackText);
+};
+
+const normalizeEvidence = (summary: AiScanIssueSummary): string | undefined =>
+  summary.evidence ?? summary.message ?? summary.summary;
+
+const detectDisallowedCategory = (
+  normalizedCategory: string | undefined,
+  text: string
+): string | undefined => {
+  if (normalizedCategory && DISALLOWED_AI_SCAN_CATEGORIES.has(normalizedCategory)) {
+    if (normalizedCategory === "credential_capture" && !isCredentialCapture(text)) {
+      return undefined;
+    }
+    if (normalizedCategory === "dynamic_code") {
+      const normalized = text.toLowerCase();
+      if (
+        !DYNAMIC_CODE_REGEX.test(normalized) &&
+        !FUNCTION_CONSTRUCTOR_REGEX.test(text)
+      ) {
+        return undefined;
+      }
+    }
+    return normalizedCategory;
+  }
+
+  if (NETWORKING_REGEX.test(text)) {
+    return "networking";
+  }
+  if (EXTERNAL_RESOURCE_REGEX.test(text)) {
+    return "external_resource";
+  }
+  if (DYNAMIC_CODE_REGEX.test(text) || FUNCTION_CONSTRUCTOR_REGEX.test(text)) {
+    return "dynamic_code";
+  }
+  if (NAVIGATION_REGEX.test(text)) {
+    return "navigation";
+  }
+  if (isCredentialCapture(text)) {
+    return "credential_capture";
+  }
+  if (DATA_EXFILTRATION_REGEX.test(text)) {
+    return "data_exfiltration";
+  }
+
+  return undefined;
+};
+
+export const evaluateAiScanPolicy = (issues: unknown[]): AiScanPolicyDecision => {
+  const summaries = summarizeAiScanIssues(issues);
+  const disallowed: AiScanIssueSummary[] = [];
+  const allowed: AiScanIssueSummary[] = [];
+  const ignored: AiScanIssueSummary[] = [];
+  const uncategorized: AiScanIssueSummary[] = [];
+
+  for (const summary of summaries) {
+    const text = buildIssueText(summary);
+    const normalizedCategory = coerceSummaryCategory(summary, text);
+
+    if (isNeverFailIssue(text, normalizedCategory)) {
+      ignored.push({ ...summary, category: normalizedCategory ?? summary.category });
+      continue;
+    }
+
+    const disallowedCategory = detectDisallowedCategory(normalizedCategory, text);
+    if (disallowedCategory) {
+      disallowed.push({
+        ...summary,
+        category: disallowedCategory,
+        evidence: normalizeEvidence(summary),
+      });
+      continue;
+    }
+
+    if (normalizedCategory && ALLOWED_AI_SCAN_CATEGORIES.has(normalizedCategory)) {
+      allowed.push({ ...summary, category: normalizedCategory });
+      continue;
+    }
+
+    uncategorized.push(summary);
+  }
+
+  return { disallowed, allowed, ignored, uncategorized };
 };
