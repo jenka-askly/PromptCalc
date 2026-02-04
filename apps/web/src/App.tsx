@@ -45,6 +45,15 @@ interface GenerateRefusalReason {
   code: string;
   message: string;
   safeAlternative: string;
+  details?: GenerateRefusalDetail[];
+}
+
+interface GenerateRefusalDetail {
+  code?: string;
+  severity?: string;
+  message?: string;
+  summary?: string;
+  evidence?: string;
 }
 
 type GenerateCalcResponse =
@@ -115,6 +124,19 @@ const buildCurrentArtifact = ({
   artifactHash: computeArtifactHash(artifactHtml),
   status,
 });
+
+const formatRefusalDetail = (detail: GenerateRefusalDetail): string => {
+  const base =
+    detail.message ?? detail.summary ?? detail.evidence ?? "AI scan issue reported.";
+  const suffixParts: string[] = [];
+  if (detail.code) {
+    suffixParts.push(`code: ${detail.code}`);
+  }
+  if (detail.severity) {
+    suffixParts.push(`severity: ${detail.severity}`);
+  }
+  return suffixParts.length > 0 ? `${base} (${suffixParts.join(", ")})` : base;
+};
 
 const App = () => {
   const [status, setStatus] = useState<HealthResponse | null>(null);
@@ -450,6 +472,15 @@ const App = () => {
             <div className="refusal">
               <strong>Refused: {generateRefusal.code}</strong>
               <div>{generateRefusal.message}</div>
+              {generateRefusal.details && generateRefusal.details.length > 0 && (
+                <ul className="refusal-issues">
+                  {generateRefusal.details.map((detail, index) => (
+                    <li key={`${detail.code ?? "issue"}-${index}`}>
+                      {formatRefusalDetail(detail)}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <div className="refusal-alt">
                 Try instead: {generateRefusal.safeAlternative}
               </div>
