@@ -1,0 +1,16 @@
+{
+  // Purpose: Share TypeScript compiler defaults across workspace packages.
+  // Persists: None.
+  // Security Risks: None.
+  "compilerOptions": {
+    "target": "ES2022",
+    "moduleResolution": "Node",
+    "module": "CommonJS",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  // Purpose: Compile shared logging helpers for workspace consumers.
+  // Persists: None.
+  // Security Risks: None.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": ".",
+    "declaration": true,
+    "composite": true
+  },
+  "include": ["*.ts"]
+}
