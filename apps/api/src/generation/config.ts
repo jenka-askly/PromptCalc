@@ -16,6 +16,7 @@ export type GenerationConfig = {
   timeoutMs: number;
   maxTokens: number;
   maxArtifactBytes: number;
+  aiScanFailClosed: boolean;
 };
 
 const parseBoolean = (value: string | undefined, defaultValue: boolean): boolean => {
@@ -60,4 +61,5 @@ export const getGenerationConfig = async (): Promise<GenerationConfig> => ({
   timeoutMs: parseNumber(process.env.OPENAI_TIMEOUT_MS, 25_000),
   maxTokens: parseNumber(process.env.OPENAI_MAX_TOKENS, 2_500),
   maxArtifactBytes: await getMaxArtifactBytes(),
+  aiScanFailClosed: parseBoolean(process.env.AI_SCAN_FAIL_CLOSED, false),
 });
