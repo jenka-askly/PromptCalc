@@ -100,24 +100,37 @@ const buildVersionPartition = (userId: string, calcId: string) =>
 const buildVersionRow = (versionId: string) => `VER#${sanitizeId(versionId)}`;
 
 
+const truncate = (value: string, maxLength: number) =>
+  value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+
 const logTableError = (
   traceId: string,
   error: unknown,
   event: string,
-  op = "calcs.storage"
+  op = "calcs.storage",
+  entityKeys?: { PartitionKey?: string; RowKey?: string }
 ): void => {
-  const errorCode =
-    error && typeof error === "object"
-      ? ((error as { code?: string; statusCode?: number }).code ??
-          String((error as { statusCode?: number }).statusCode ?? "unknown"))
-      : "unknown";
+  const restError = error && typeof error === "object" ? (error as Record<string, unknown>) : null;
+  const statusCode = restError?.statusCode;
+  const code = restError?.code;
+  const details = restError?.details;
+  const message = typeof restError?.message === "string" ? truncate(restError.message, 200) : undefined;
+  const detailsErrorCode =
+    details && typeof details === "object"
+      ? (details as { errorCode?: unknown }).errorCode
+      : undefined;
 
   logEvent({
     level: "error",
     op,
     traceId,
     event,
-    errorCode,
+    errorCode: code ?? (typeof statusCode === "number" ? String(statusCode) : "unknown"),
+    statusCode: typeof statusCode === "number" ? statusCode : undefined,
+    restCode: typeof code === "string" ? code : undefined,
+    restDetailsErrorCode: typeof detailsErrorCode === "string" ? detailsErrorCode : undefined,
+    restMessage: message,
+    entityKeys,
     message: "Table operation failed.",
   });
 };
@@ -167,7 +180,10 @@ const persistCalculatorEntity = async (
   try {
     await tableClient.upsertEntity(entity, "Merge");
   } catch (error) {
-    logTableError(traceId, error, "calculator.upsert.failed");
+    logTableError(traceId, error, "calculator.upsert.failed", "calcs.storage", {
+      PartitionKey: entity.partitionKey,
+      RowKey: entity.rowKey,
+    });
     throw error;
   }
 
@@ -189,7 +205,10 @@ const persistCalculatorVersionEntity = async (
   try {
     await tableClient.upsertEntity(entity, "Replace");
   } catch (error) {
-    logTableError(traceId, error, "version.upsert.failed");
+    logTableError(traceId, error, "version.upsert.failed", "calcs.storage", {
+      PartitionKey: entity.partitionKey,
+      RowKey: entity.rowKey,
+    });
     throw error;
   }
 
@@ -315,7 +334,9 @@ const loadCalculatorEntity = async (
     return (await tableClient.getEntity<CalculatorEntity>(partitionKey, rowKey)) ?? null;
   } catch (error) {
     const code = error && typeof error === "object" ? (error as { code?: string }).code : null;
-    if (code === "ResourceNotFound") {
+    const statusCode =
+      error && typeof error === "object" ? (error as { statusCode?: number }).statusCode : null;
+    if (code === "ResourceNotFound" || statusCode === 404) {
       logEvent({
         level: "info",
         op: "calcs.storage",
@@ -432,19 +453,19 @@ const saveCalc = async (
   }
 
   const versionEntity: CalculatorVersionEntity = {
-    partitionKey: buildVersionPartition(userId, calcId),
-    rowKey: buildVersionRow(versionId),
-    entityType: "CalculatorVersion",
-    calcId: normalizeId(calcId),
-    versionId: normalizeId(versionId),
-    userId: normalizeId(userId),
-    createdAt: nowIso,
+    partitionKey: String(buildVersionPartition(userId, calcId)),
+    rowKey: String(buildVersionRow(versionId)),
+    entityType: String("CalculatorVersion"),
+    userId: String(userId),
+    calcId: String(calcId),
+    versionId: String(versionId),
+    createdAt: String(nowIso),
+    status: String("ok") as CalculatorVersionEntity["status"],
     promptLen,
-    status: "ok",
-    manifestBlobPath: blobPath.manifest,
-    artifactBlobPath: blobPath.artifact,
-    artifactHash,
-    ...(promptValue ? { prompt: promptValue } : {}),
+    manifestBlobPath: String(blobPath.manifest),
+    artifactBlobPath: String(blobPath.artifact),
+    artifactHash: String(artifactHash),
+    ...(promptValue ? { prompt: String(promptValue) } : {}),
   };
 
   try {
