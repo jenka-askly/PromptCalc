@@ -7,10 +7,10 @@
   "name": "@promptcalc/api",
   "version": "0.0.0",
   "private": true,
-  "main": "dist/src/functions/*.js",
+  "main": "dist/main.js",
   "scripts": {
-    "dev": "func start --typescript",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && func start --typescript"
   },
   "dependencies": {
     "@azure/functions": "^4.5.0",
