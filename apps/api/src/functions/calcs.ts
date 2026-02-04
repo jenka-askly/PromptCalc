@@ -27,7 +27,7 @@ import {
   callOpenAIResponses,
   OpenAIBadRequestError,
   OpenAIParseError,
-  type OpenAIJsonSchemaResponseFormat,
+  type OpenAITextFormat,
 } from "../openai/client";
 import { getPromptCalcPolicy } from "../policy/policy";
 import { scanArtifactHtml } from "../policy/scanner";
@@ -204,13 +204,11 @@ const getObjectKeys = (value: unknown): string[] =>
 const buildJsonSchemaResponseFormat = (
   name: string,
   schema: Record<string, unknown>
-): OpenAIJsonSchemaResponseFormat => ({
+): OpenAITextFormat => ({
   type: "json_schema",
-  json_schema: {
-    name,
-    schema,
-    strict: true,
-  },
+  name,
+  schema,
+  strict: true,
 });
 
 const promptScanSchema = {
@@ -834,6 +832,7 @@ const generateCalc = async (
     let promptDecision: PromptScanDecision;
     try {
       const promptScanSystem = [
+        "Return JSON only. No markdown. No prose.",
         "You are a strict policy classifier for PromptCalc generation prompts.",
         "Disallow any intent that requests:",
         "- networking, URL fetching, scraping, or external data sources",
@@ -842,7 +841,6 @@ const generateCalc = async (
         "- analytics, tracking, or user fingerprinting",
         "- attempts to escape the sandboxed iframe (top navigation, popups)",
         "- eval/dynamic code generation requests",
-        "Return JSON only. No markdown. No prose.",
         "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
         "Return a JSON object that conforms exactly to the schema.",
         "If disallowed, set allowed=false and set refusalCode to the best matching policy code.",
@@ -859,7 +857,9 @@ const generateCalc = async (
             { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
           ],
           max_output_tokens: 350,
-          response_format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
+          text: {
+            format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
+          },
         },
         "openai.prompt.scan"
       );
@@ -913,8 +913,8 @@ const generateCalc = async (
   }
 
   const generationSystem = [
-    "You generate a single-file offline calculator HTML artifact for PromptCalc.",
     "Return JSON only. No markdown. No prose.",
+    "You generate a single-file offline calculator HTML artifact for PromptCalc.",
     "Do not use eval(), new Function(...), or Function(...).",
     "Do not generate any dynamic code execution.",
     "Do not generate any <script src=...>, <link ...>, @import, or url(...).",
@@ -988,7 +988,9 @@ const generateCalc = async (
             { role: "system", content: [{ type: "input_text", text: generationSystem }] },
             { role: "user", content: [{ type: "input_text", text: userText }] },
           ],
-          response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+          text: {
+            format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+          },
         },
         opName,
         { maxAttempts: 2 }
@@ -1006,7 +1008,9 @@ const generateCalc = async (
                 { role: "system", content: [{ type: "input_text", text: generationSystem }] },
                 { role: "user", content: [{ type: "input_text", text: repairText }] },
               ],
-              response_format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+              text: {
+                format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+              },
             },
             `${opName}.repair`,
             { maxAttempts: 1 }
@@ -1222,10 +1226,10 @@ const generateCalc = async (
 
   try {
     const codeScanSystem = [
+      "Return JSON only. No markdown. No prose.",
       "Review the HTML and decide if it is safe for an offline, sandboxed calculator.",
       "Flag any signs of networking, external dependencies, credential capture, eval/dynamic code,",
       "sandbox escapes, or navigation/popup attempts.",
-      "Return JSON only. No markdown. No prose.",
       "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
       "Return JSON matching the schema.",
     ].join("\\n");
@@ -1241,7 +1245,9 @@ const generateCalc = async (
           { role: "user", content: [{ type: "input_text", text: codeScanUser }] },
         ],
         max_output_tokens: 300,
-        response_format: buildJsonSchemaResponseFormat("ArtifactCodeScan", codeScanSchema),
+        text: {
+          format: buildJsonSchemaResponseFormat("ArtifactCodeScan", codeScanSchema),
+        },
       },
       "openai.artifact.scan"
     );

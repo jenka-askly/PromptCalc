@@ -19,24 +19,29 @@ export type OpenAIInputContent = {
   text: string;
 };
 
-export type OpenAIJsonSchemaResponseFormat = {
-  type: "json_schema";
-  json_schema: {
-    name: string;
-    schema: Record<string, unknown>;
-    strict: boolean;
-  };
-};
+export type OpenAITextFormat =
+  | {
+      type: "json_schema";
+      name: string;
+      schema: Record<string, unknown>;
+      strict: boolean;
+    }
+  | {
+      type: "json_object";
+    };
 
 export type OpenAIRequest = {
   input: Array<{ role: "system" | "user"; content: OpenAIInputContent[] }>;
   max_output_tokens?: number;
   model?: string;
-  response_format?: OpenAIJsonSchemaResponseFormat;
+  text?: {
+    format?: OpenAITextFormat;
+  };
 };
 
 export type OpenAIRequestOptions = {
   maxAttempts?: number;
+  jsonSchemaFallback?: boolean;
 };
 
 export type OpenAIResponse = {
@@ -175,6 +180,20 @@ const extractErrorMessage = (payload: OpenAIResponse): string | undefined => {
   return truncateMessage(message, 200);
 };
 
+const buildJsonObjectFormat = (): OpenAITextFormat => ({ type: "json_object" });
+
+const isJsonSchemaUnsupported = (errorMessage?: string): boolean => {
+  if (!errorMessage) {
+    return false;
+  }
+  const message = errorMessage.toLowerCase();
+  return (
+    message.includes("response_format") ||
+    message.includes("text.format") ||
+    message.includes("json_schema")
+  );
+};
+
 export const callOpenAIResponses = async <T>(
   traceId: string,
   config: OpenAIClientConfig,
@@ -184,18 +203,26 @@ export const callOpenAIResponses = async <T>(
 ): Promise<{ parsed: T; raw: OpenAIResponse }> => {
   const baseUrl = config.baseUrl.endsWith("/") ? config.baseUrl : `${config.baseUrl}/`;
   const url = new URL("responses", baseUrl).toString();
-  const requestPayload = {
-    model: requestBody.model ?? config.model,
-    input: requestBody.input,
-    max_output_tokens: requestBody.max_output_tokens ?? config.maxTokens,
-    response_format: requestBody.response_format,
+  const buildRequestPayload = (formatOverride?: OpenAITextFormat) => {
+    const format = formatOverride ?? requestBody.text?.format;
+    const text = format ? { ...(requestBody.text ?? {}), format } : requestBody.text;
+    return {
+      model: requestBody.model ?? config.model,
+      input: requestBody.input,
+      max_output_tokens: requestBody.max_output_tokens ?? config.maxTokens,
+      text,
+    };
   };
-  const body = JSON.stringify(requestPayload);
 
-  const maxAttempts = options.maxAttempts ?? 3;
+  let maxAttempts = options.maxAttempts ?? 3;
   let lastError: Error | null = null;
+  let usedJsonFallback = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const requestPayload = buildRequestPayload(
+      usedJsonFallback ? buildJsonObjectFormat() : undefined
+    );
+    const body = JSON.stringify(requestPayload);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
     const startedAt = Date.now();
@@ -252,6 +279,26 @@ export const callOpenAIResponses = async <T>(
               contentKeys: item.content.map((content) => Object.keys(content)),
             })),
           });
+          if (
+            !usedJsonFallback &&
+            options.jsonSchemaFallback !== false &&
+            requestBody.text?.format?.type === "json_schema" &&
+            isJsonSchemaUnsupported(errorMessage)
+          ) {
+            logEvent({
+              level: "info",
+              op,
+              traceId,
+              event: "openai.responses.format_fallback",
+              message: "Retrying with json_object format after 400.",
+            });
+            usedJsonFallback = true;
+            if (attempt >= maxAttempts) {
+              maxAttempts += 1;
+            }
+            shouldRetry = true;
+            continue;
+          }
           throw new OpenAIBadRequestError(
             "OpenAI request invalid (400). Check server configuration.",
             response.status
