@@ -193,7 +193,6 @@ export const CalculatorViewer = ({
     if (!isHandshakeMessage(event.data)) {
       setStatus("error");
       setErrorCode("INVALID_MESSAGE");
-      setSrcDoc(buildBlankDoc());
       return;
     }
 
@@ -295,7 +294,6 @@ export const CalculatorViewer = ({
       }
       setStatus("error");
       setErrorCode("WATCHDOG_TIMEOUT");
-      setSrcDoc(buildBlankDoc());
     }, timeoutMs);
     if (isDev) {
       console.warn("CalculatorViewer watchdog started", { timeoutMs });
