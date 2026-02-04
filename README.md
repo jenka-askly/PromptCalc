@@ -8,6 +8,13 @@ Security Risks: None.
 
 PromptCalc is a spec-driven prototype for turning prompts into constrained, offline calculator UIs. The canonical specification lives in [`spec/SPEC.md`](spec/SPEC.md) and is the single source of truth.
 
+## Continuity
+- [PROJECT_STATUS.md](PROJECT_STATUS.md)
+- [DECISIONS.md](DECISIONS.md)
+- [PROMPTS.md](PROMPTS.md)
+- [RUNBOOK_LOCAL.md](RUNBOOK_LOCAL.md)
+- [CODEX_LOG.md](CODEX_LOG.md)
+
 ## Local development
 - Use Node.js 20 and Azure Functions Core Tools v4 for the API.
 - Install dependencies: `npm install`
