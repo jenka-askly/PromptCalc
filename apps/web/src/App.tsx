@@ -41,6 +41,22 @@ interface CalculatorVersionResponse {
   artifactHtml: string;
 }
 
+interface GenerateRefusalReason {
+  code: string;
+  message: string;
+  safeAlternative: string;
+}
+
+type GenerateCalcResponse =
+  | {
+      status: "ok";
+      calcId: string;
+      versionId: string;
+      manifest: Record<string, unknown>;
+      artifactHtml: string;
+    }
+  | { status: "refused"; refusalReason: GenerateRefusalReason };
+
 type AuthState =
   | { mode: "unknown" }
   | { mode: "dev"; userId: string }
@@ -63,6 +79,12 @@ const App = () => {
   const [activeCalcId, setActiveCalcId] = useState<string | null>(null);
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const [authState, setAuthState] = useState<AuthState>({ mode: "unknown" });
+  const [generatePrompt, setGeneratePrompt] = useState(
+    "Simple tip calculator with bill + tip% + total."
+  );
+  const [generateStatus, setGenerateStatus] = useState<string | null>(null);
+  const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const sampleArtifactHtml = useMemo(
     () => (sample === "good" ? GOOD_CALC_HTML : BAD_CALC_HTML),
@@ -192,6 +214,51 @@ const App = () => {
     }
   };
 
+  const generateCalc = async () => {
+    setGenerateStatus(null);
+    setGenerateRefusal(null);
+    setCalcsError(null);
+    setIsGenerating(true);
+    try {
+      const response = await fetch("/api/calcs/generate", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: generatePrompt,
+          baseCalcId: activeCalcId ?? undefined,
+          baseVersionId: activeVersionId ?? undefined,
+        }),
+      });
+
+      const data = (await response.json()) as GenerateCalcResponse;
+      if (!response.ok) {
+        throw new Error(
+          `Generate failed (${response.status}): ${JSON.stringify(data)}`
+        );
+      }
+
+      if (data.status === "refused") {
+        setGenerateRefusal(data.refusalReason);
+        setGenerateStatus("Generation refused.");
+        return;
+      }
+
+      setArtifactHtml(data.artifactHtml);
+      setArtifactSource("saved");
+      setActiveCalcId(data.calcId);
+      setActiveVersionId(data.versionId);
+      setGenerateStatus(`Generated ${data.calcId} v${data.versionId}`);
+      await loadCalcs();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setGenerateStatus(`Generation failed: ${message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const loadVersion = async (calcId: string, versionId: string) => {
     setCalcsError(null);
     try {
@@ -250,6 +317,30 @@ const App = () => {
       </header>
       <section className="panel">
         <h2>Calculator viewer</h2>
+        <div className="generate">
+          <label htmlFor="generate-prompt">Generate calculator</label>
+          <textarea
+            id="generate-prompt"
+            rows={3}
+            value={generatePrompt}
+            onChange={(event) => setGeneratePrompt(event.target.value)}
+          />
+          <div className="actions">
+            <button type="button" onClick={generateCalc} disabled={isGenerating}>
+              {isGenerating ? "Generating..." : "Generate calculator"}
+            </button>
+            {generateStatus && <span className="status">{generateStatus}</span>}
+          </div>
+          {generateRefusal && (
+            <div className="refusal">
+              <strong>Refused: {generateRefusal.code}</strong>
+              <div>{generateRefusal.message}</div>
+              <div className="refusal-alt">
+                Try instead: {generateRefusal.safeAlternative}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="toggle">
           <label>
             <input

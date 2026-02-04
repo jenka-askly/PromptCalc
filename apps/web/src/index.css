@@ -106,6 +106,35 @@ header {
   background: #ffffff;
 }
 
+.generate {
+  display: grid;
+  gap: 8px;
+}
+
+.generate textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  font-family: inherit;
+}
+
+.refusal {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #7c2d12;
+  font-size: 14px;
+}
+
+.refusal-alt {
+  color: #9a3412;
+}
+
 button {
   width: fit-content;
   padding: 8px 16px;

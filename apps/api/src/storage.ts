@@ -14,7 +14,7 @@ import { logEvent } from "@promptcalc/logger";
 const DEFAULT_STORAGE_CONNECTION = "UseDevelopmentStorage=true";
 const DEFAULT_TABLE_NAME = "PromptCalcMeta";
 const DEFAULT_CONTAINER_NAME = "promptcalc";
-const DEFAULT_MAX_ARTIFACT_BYTES = 204_800;
+const DEFAULT_MAX_ARTIFACT_BYTES = 200_000;
 
 let cachedTableClient: TableClient | null = null;
 let cachedContainerClient: ContainerClient | null = null;
@@ -88,6 +88,14 @@ export const getContainerClient = async (
 };
 
 const readMaxArtifactBytes = async (): Promise<number> => {
+  const envValue = process.env.MAX_ARTIFACT_BYTES;
+  if (envValue) {
+    const parsed = Number(envValue);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
   const candidates = [
     path.resolve(process.cwd(), "spec/policy.yaml"),
     path.resolve(__dirname, "../../../spec/policy.yaml"),
