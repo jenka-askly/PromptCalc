@@ -18,3 +18,5 @@ dist/
 
 local.settings.json
 .env
+/package-lock.json
+/.vs/slnx.sqlite
