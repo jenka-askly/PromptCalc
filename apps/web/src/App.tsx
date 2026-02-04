@@ -1,10 +1,14 @@
 /**
- * Purpose: Render the PromptCalc shell UI and health check controls.
+ * Purpose: Render the PromptCalc shell UI and sandboxed calculator viewer.
  * Persists: None.
- * Security Risks: Calls backend health endpoint and logs trace IDs.
+ * Security Risks: Calls backend health endpoint, logs trace IDs, and renders untrusted HTML in a sandboxed iframe.
  */
 
 import { useState } from "react";
+
+import { CalculatorViewer } from "./components/CalculatorViewer";
+import { BAD_CALC_HTML } from "./samples/badCalcInfiniteLoop";
+import { GOOD_CALC_HTML } from "./samples/goodCalc";
 
 interface HealthResponse {
   ok: boolean;
@@ -17,6 +21,7 @@ const App = () => {
   const [status, setStatus] = useState<HealthResponse | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sample, setSample] = useState<"good" | "bad">("good");
 
   const checkHealth = async () => {
     setError(null);
@@ -43,6 +48,34 @@ const App = () => {
       <header>
         <h1>PromptCalc</h1>
       </header>
+      <section className="panel">
+        <h2>Calculator viewer</h2>
+        <div className="toggle">
+          <label>
+            <input
+              type="radio"
+              name="sample"
+              value="good"
+              checked={sample === "good"}
+              onChange={() => setSample("good")}
+            />
+            Good sample
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="sample"
+              value="bad"
+              checked={sample === "bad"}
+              onChange={() => setSample("bad")}
+            />
+            Bad sample (hang)
+          </label>
+        </div>
+        <CalculatorViewer
+          artifactHtml={sample === "good" ? GOOD_CALC_HTML : BAD_CALC_HTML}
+        />
+      </section>
       <section className="panel">
         <h2>API status</h2>
         <button type="button" onClick={checkHealth}>

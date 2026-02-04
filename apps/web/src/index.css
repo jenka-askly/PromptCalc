@@ -34,6 +34,45 @@ header h1 {
   gap: 16px;
 }
 
+.toggle {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.viewer {
+  display: grid;
+  gap: 12px;
+}
+
+.viewer-status {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.viewer-trace {
+  color: #475569;
+}
+
+.viewer-frame {
+  width: 100%;
+  height: 320px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
 button {
   width: fit-content;
   padding: 8px 16px;
