@@ -58,8 +58,10 @@ interface ArtifactGenerationResponse {
 }
 
 interface CodeScanDecision {
-  safe: boolean;
-  findings: string[];
+  isSafe?: boolean;
+  issues?: string[];
+  safe?: boolean;
+  findings?: string[];
 }
 
 interface CalculatorSummary {
@@ -771,6 +773,7 @@ const generateCalc = async (
       "- analytics, tracking, or user fingerprinting",
       "- attempts to escape the sandboxed iframe (top navigation, popups)",
       "- eval/dynamic code generation requests",
+      "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
       "Return a JSON object that conforms exactly to the schema.",
       "If disallowed, set allowed=false and set refusalCode to the best matching policy code.",
     ].join("\\n");
@@ -1043,6 +1046,7 @@ const generateCalc = async (
       "Review the HTML and decide if it is safe for an offline, sandboxed calculator.",
       "Flag any signs of networking, external dependencies, credential capture, eval/dynamic code,",
       "sandbox escapes, or navigation/popup attempts.",
+      "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
       "Return JSON matching the schema.",
     ].join("\\n");
 
@@ -1103,10 +1107,17 @@ const generateCalc = async (
       }
     }
 
-    if (!scanDecision.parsed.safe) {
+    const parsedIssues = Array.isArray(scanDecision.parsed.issues)
+      ? scanDecision.parsed.issues
+      : Array.isArray(scanDecision.parsed.findings)
+        ? scanDecision.parsed.findings
+        : [];
+    const isSafe = scanDecision.parsed.isSafe ?? scanDecision.parsed.safe;
+
+    if (parsedIssues.length > 0) {
       const reason = buildRefusalReason(
         "AI_SCAN_FAILED",
-        listToString(scanDecision.parsed.findings) || "AI code scan flagged the artifact.",
+        listToString(parsedIssues) || "AI code scan flagged the artifact.",
         "Use a smaller, simpler offline calculator prompt."
       );
       logEvent({
@@ -1114,9 +1125,18 @@ const generateCalc = async (
         op,
         traceId,
         event: "artifact.aiScan.failed",
-        findings: listToString(scanDecision.parsed.findings),
+        findings: listToString(parsedIssues),
       });
       return buildRefusalResponse(traceId, 200, reason);
+    }
+    if (isSafe === false) {
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.aiScan.anomaly",
+        findings: listToString(parsedIssues),
+      });
     }
   } catch (error) {
     logEvent({
@@ -1126,6 +1146,14 @@ const generateCalc = async (
       event: "artifact.aiScan.error",
       message: error instanceof Error ? error.message : "unknown error",
     });
+    if (config.aiScanFailClosed) {
+      const reason = buildRefusalReason(
+        "AI_SCAN_FAILED",
+        "AI code scan failed.",
+        "Use a smaller, simpler offline calculator prompt."
+      );
+      return buildRefusalResponse(traceId, 200, reason);
+    }
   }
 
     if (!isValidManifest(finalManifest)) {

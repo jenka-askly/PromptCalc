@@ -133,8 +133,19 @@ const extractFirstJsonObject = (value: string): string | null => {
   return null;
 };
 
-const parseJsonLenient = <T>(value: string): T => {
+const stripCodeFences = (value: string): string => {
   const trimmed = value.trim();
+  if (!trimmed.startsWith("```")) {
+    return trimmed;
+  }
+  const withoutOpeningFence = trimmed.replace(/^```[a-zA-Z0-9_-]*\s*/u, "");
+  const withoutClosingFence = withoutOpeningFence.replace(/\s*```$/u, "");
+  return withoutClosingFence.trim();
+};
+
+const parseJsonLenient = <T>(value: string): T => {
+  const cleaned = stripCodeFences(value);
+  const trimmed = cleaned.trim();
   try {
     return JSON.parse(trimmed) as T;
   } catch (error) {
