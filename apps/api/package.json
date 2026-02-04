@@ -13,7 +13,9 @@
     "dev": "npm run build && func start --typescript"
   },
   "dependencies": {
+    "@azure/data-tables": "^14.2.0",
     "@azure/functions": "^4.5.0",
+    "@azure/storage-blob": "^12.19.0",
     "@promptcalc/logger": "file:../../shared/logger",
     "@promptcalc/types": "file:../../shared/types"
   },

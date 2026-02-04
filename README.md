@@ -13,6 +13,20 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
 - Install dependencies: `npm install`
 - Start the web app and API together: `npm run dev`
 
+## Persistence (local)
+- PromptCalc uses Azure Table + Blob storage for calculator persistence.
+- Local development defaults to Azurite via `UseDevelopmentStorage=true`.
+- Copy `apps/api/local.settings.example.json` to `apps/api/local.settings.json` with:
+  - `AzureWebJobsStorage=UseDevelopmentStorage=true`
+  - `PROMPTCALC_STORAGE_CONNECTION=UseDevelopmentStorage=true`
+  - `PROMPTCALC_TABLE_NAME=PromptCalcMeta`
+  - `PROMPTCALC_CONTAINER=promptcalc`
+  - `DEV_USER_ID=dev-user`
+- To run Azurite locally:
+  - Install Azurite (`npm install -g azurite`) or run it via Docker.
+  - Start it before `npm run dev` if you want persistence.
+- Optional smoke test: `pwsh scripts/dev-smoke.ps1` (requires the API host running).
+
 ## Quick sanity check
 - Open the web app in your browser.
 - Click **Check health** to call `/api/health`.
