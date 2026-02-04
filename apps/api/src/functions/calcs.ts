@@ -93,11 +93,20 @@ const storageErrorResponse = (traceId: string): HttpResponseInit =>
 const sanitizeId = (value: string) => value.replace(/[\\/]/g, "_");
 const normalizeId = (value: string | undefined): string => sanitizeId(String(value ?? ""));
 
-const buildCalcPartition = (userId: string) => `USER#${sanitizeId(userId)}`;
-const buildCalcRow = (calcId: string) => `CALC#${sanitizeId(calcId)}`;
+const MAX_TABLE_KEY_LENGTH = 1024;
+const safeKey = (value: string): string => {
+  const sanitized = value.replace(/[^A-Za-z0-9_-]/g, "_");
+  if (sanitized.length <= MAX_TABLE_KEY_LENGTH) {
+    return sanitized;
+  }
+  return createHash("sha256").update(sanitized, "utf8").digest("hex");
+};
+
+const buildCalcPartition = (userId: string) => `USER_${safeKey(userId)}`;
+const buildCalcRow = (calcId: string) => `CALC_${safeKey(calcId)}`;
 const buildVersionPartition = (userId: string, calcId: string) =>
-  `USER#${sanitizeId(userId)}#CALC#${sanitizeId(calcId)}`;
-const buildVersionRow = (versionId: string) => `VER#${sanitizeId(versionId)}`;
+  `USER_${safeKey(userId)}_CALC_${safeKey(calcId)}`;
+const buildVersionRow = (versionId: string) => `VER_${safeKey(versionId)}`;
 
 
 const truncate = (value: string, maxLength: number) =>
