@@ -138,3 +138,11 @@ Security Risks: None.
 - Replaced the red-team typed arming phrase with a Yes/No control plus an explicit confirmation modal before arming.
 - Kept safety behavior intact: dev-only gating, metadata-only logging, and per-request “Proceed anyway” interstitials for warn/off flows.
 - Hardened server request handling to ignore crafted proceed overrides when red-team capability is unavailable; updated UI/API tests accordingly.
+
+## 2026-02-05 (America/Los_Angeles)
+- Added dev-only red-team artifact dumping gated by `PROMPTCALC_REDKIT=1` via `isRedTeamEnabled()`.
+- Added `.promptcalc_artifacts/` local dump layout (`requests/`, `responses/`, `html/`, `logs/`) with runtime creation and gitignore coverage.
+- Wired dump capture into `calcs/generate` scan + generation + error paths and logged dump file locations with `[redteam_dump]` lines.
+- Added `.promptcalc_artifacts/index.log` append entries for quick per-trace retrieval.
+- Files changed: `.gitignore`, `apps/api/src/generation/scanPolicy.ts`, `apps/api/src/generation/dumpRedTeamArtifacts.ts`, `apps/api/src/functions/calcs.ts`, `apps/api/types/node/index.d.ts`, `PROJECT_STATUS.md`, `CODEX_LOG.md`.
+- Enable by running API with `PROMPTCALC_REDKIT=1`.
