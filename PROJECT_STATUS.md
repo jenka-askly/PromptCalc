@@ -28,6 +28,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Optional smoke test: `pwsh scripts/dev-smoke.ps1` (requires API host running)
 
 ## Current Behavior Summary
+- Web UI shell refactored to a desktop-first workbench layout: fixed top bar, left control stack (generate + debug + collapsible metadata), right output area (viewer/log/html tabs), and a collapsed-by-default bottom drawer for My calculators + API status.
 - PromptCalc generates offline calculator HTML artifacts based on the spec in `spec/SPEC.md`.
 - Artifacts run in a sandboxed iframe, and policy scanning rejects disallowed patterns.
 - The API supports generating calculators and managing versions for saved calculators.

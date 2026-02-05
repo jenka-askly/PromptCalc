@@ -231,6 +231,8 @@ const App = () => {
     | { kind: "scan_skipped" }
     | null
   >(null);
+  const [outputTab, setOutputTab] = useState<"output" | "logs" | "html">("output");
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const previousArtifactRef = useRef<CurrentArtifact | null>(null);
   const viewerKey = `${currentArtifact.artifactHash}`;
   const manifestExecutionModel =
@@ -594,8 +596,14 @@ const App = () => {
 
   return (
     <div className="app">
-      <header>
-        <h1>PromptCalc</h1>
+      <header className="topbar">
+        <div className="topbar-title">
+          <h1>PromptCalc</h1>
+          <div className="topbar-indicators">
+            {redTeamCapabilityAvailable && <span className="status">Red-team dev checks enabled</span>}
+            {(generateTraceId ?? traceId) && <span className="status">Trace ID: {generateTraceId ?? traceId}</span>}
+          </div>
+        </div>
         <div className="auth">
           {authState.mode === "dev" && (
             <span className="auth-status">Dev mode user: {authState.userId}</span>
@@ -621,56 +629,80 @@ const App = () => {
           )}
         </div>
       </header>
-      <section className="panel">
-        <h2>Calculator viewer</h2>
-        <div className="generate">
-          <label htmlFor="generate-prompt">Generate calculator</label>
-          <textarea
-            id="generate-prompt"
-            rows={3}
-            value={generatePrompt}
-            onChange={(event) => setGeneratePrompt(event.target.value)}
-          />
-          <div className="actions">
-            <button type="button" onClick={() => void generateCalc(false)} disabled={isGenerating}>
-              {isGenerating ? "Generating..." : "Generate calculator"}
-            </button>
-            {generateStatus && <span className="status">{generateStatus}</span>}
-            {generateTraceId && <span className="status">Trace ID: {generateTraceId}</span>}
-            {generateDumpDir && <span className="status">Dump folder: {generateDumpDir}</span>}
-            {effectiveProfileSummary && <span className="status">{effectiveProfileSummary}</span>}
-          </div>
-          {generateRefusal && (
-            <div className="refusal">
-              <strong>Refused: {generateRefusal.code}</strong>
-              <div>{generateRefusal.message}</div>
-              {generateRefusal.details && generateRefusal.details.length > 0 && (
-                <ul className="refusal-issues">
-                  {generateRefusal.details.map((detail, index) => (
-                    <li key={`${detail.code ?? "issue"}-${index}`}>
-                      {formatRefusalDetail(detail)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="refusal-alt">
-                Try instead: {generateRefusal.safeAlternative}
+      <main className="workbench">
+        <aside className="control-pane panel">
+          <details open className="collapsible-section">
+            <summary>Generate</summary>
+            <div className="generate">
+              <label htmlFor="generate-prompt">Prompt input</label>
+              <textarea
+                id="generate-prompt"
+                rows={3}
+                value={generatePrompt}
+                onChange={(event) => setGeneratePrompt(event.target.value)}
+              />
+              <div className="actions">
+                <button type="button" onClick={() => void generateCalc(false)} disabled={isGenerating}>
+                  {isGenerating ? "Generating..." : "Generate calculator"}
+                </button>
+              </div>
+              {generateStatus && <span className="status">{generateStatus}</span>}
+              {generateTraceId && <span className="status">Trace ID: {generateTraceId}</span>}
+              {generateDumpDir && <span className="status">Dump folder: {generateDumpDir}</span>}
+              {effectiveProfileSummary && <span className="status">{effectiveProfileSummary}</span>}
+
+              <div className="toggle">
+                <label>
+                  <input
+                    type="radio"
+                    name="sample"
+                    value="good"
+                    checked={sample === "good"}
+                    onChange={() => {
+                      setSample("good");
+                      setCurrentArtifact(
+                        buildCurrentArtifact({
+                          artifactHtml: GOOD_CALC_HTML,
+                          manifest: buildSampleManifest("good"),
+                          status: "sample",
+                        })
+                      );
+                    }}
+                  />
+                  Good sample
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="sample"
+                    value="bad"
+                    checked={sample === "bad"}
+                    onChange={() => {
+                      setSample("bad");
+                      setCurrentArtifact(
+                        buildCurrentArtifact({
+                          artifactHtml: BAD_CALC_HTML,
+                          manifest: buildSampleManifest("bad"),
+                          status: "sample",
+                        })
+                      );
+                    }}
+                  />
+                  Bad sample (hang)
+                </label>
+              </div>
+              <div className="actions">
+                <button type="button" onClick={saveCalc}>
+                  Save sample
+                </button>
+                {saveStatus && <span className="status">{saveStatus}</span>}
               </div>
             </div>
-          )}
-          {generateDumpPaths.length > 0 && (
-            <div className="dump-paths">
-              <strong>Debug dump paths</strong>
-              <ul>
-                {generateDumpPaths.map((dumpPath, index) => (
-                  <li key={`${dumpPath}-${index}`}>{dumpPath}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          </details>
+
           {redTeamCapabilityAvailable && (
-            <div className="redteam-panel">
-              <strong>Dev red-team debug checks</strong>
+            <details open className="collapsible-section redteam-panel">
+              <summary>Debug / red-team</summary>
               <p>Dev-only controls (PROMPTCALC_REDKIT=1). Use for permutation debugging only.</p>
               <label>
                 Red-team profile enabled
@@ -707,115 +739,169 @@ const App = () => {
                   setRedTeamProfile(defaultProfile());
                 }}>Reset</button>
               </div>
-            </div>
+            </details>
           )}
-        </div>
-        <div className="toggle">
-          <label>
-            <input
-              type="radio"
-              name="sample"
-              value="good"
-              checked={sample === "good"}
-              onChange={() => {
-                setSample("good");
-                setCurrentArtifact(
-                  buildCurrentArtifact({
-                    artifactHtml: GOOD_CALC_HTML,
-                    manifest: buildSampleManifest("good"),
-                    status: "sample",
-                  })
-                );
-              }}
-            />
-            Good sample
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="sample"
-              value="bad"
-              checked={sample === "bad"}
-              onChange={() => {
-                setSample("bad");
-                setCurrentArtifact(
-                  buildCurrentArtifact({
-                    artifactHtml: BAD_CALC_HTML,
-                    manifest: buildSampleManifest("bad"),
-                    status: "sample",
-                  })
-                );
-              }}
-            />
-            Bad sample (hang)
-          </label>
-        </div>
-        <div className="actions">
-          <button type="button" onClick={saveCalc}>
-            Save sample
-          </button>
-          {saveStatus && <span className="status">{saveStatus}</span>}
-        </div>
-        {scanBanner === "warn" && <div className="scan-banner warn">You proceeded despite scan warning.</div>}
-        {scanBanner === "off" && <div className="scan-banner off">Scan disabled (red team mode).</div>}
-        <CalculatorViewer
-          key={viewerKey}
-          artifactHtml={currentArtifact.artifactHtml}
-          calcId={currentArtifact.calcId}
-          versionId={currentArtifact.versionId}
-        />
-        {currentArtifact.manifest && (
-          <div className="manifest-details">
-            <h3>Manifest details</h3>
-            <dl>
-              <div>
-                <dt>Spec version</dt>
-                <dd>{manifestSpecVersion}</dd>
-              </div>
-              <div>
-                <dt>Execution model</dt>
-                <dd>{manifestExecutionModel}</dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </section>
-      <section className="panel">
-        <h2>My calculators</h2>
-        <div className="actions">
-          <button type="button" onClick={loadCalcs} disabled={loadingCalcs}>
-            {loadingCalcs ? "Loading..." : "Refresh list"}
-          </button>
-          {calcsError && <span className="error">Error: {calcsError}</span>}
-        </div>
-        {calcs.length === 0 && !loadingCalcs && <p>No calculators saved yet.</p>}
-        {calcs.length > 0 && (
-          <ul className="calc-list">
-            {calcs.map((calc) => (
-              <li key={calc.calcId} className="calc-item">
-                <div>
-                  <strong>{calc.title}</strong>
-                  <div className="calc-meta">
-                    Updated {new Date(calc.updatedAt).toLocaleString()}
+
+          {currentArtifact.manifest && (
+            <details className="collapsible-section">
+              <summary>Manifest / metadata</summary>
+              <div className="manifest-details">
+                <dl>
+                  <div>
+                    <dt>Spec version</dt>
+                    <dd>{manifestSpecVersion}</dd>
                   </div>
-                  <div className="calc-meta">ID {calc.calcId}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void loadVersion(calc.calcId, calc.currentVersionId)
-                  }
-                >
-                  Load
+                  <div>
+                    <dt>Execution model</dt>
+                    <dd>{manifestExecutionModel}</dd>
+                  </div>
+                  <div>
+                    <dt>Profile ID</dt>
+                    <dd>{redTeamProfileHash}</dd>
+                  </div>
+                </dl>
+              </div>
+            </details>
+          )}
+        </aside>
+
+        <section className="output-pane panel">
+          <h2>Output area</h2>
+          <div className="tabs" role="tablist" aria-label="Output tabs">
+            <button type="button" className={outputTab === "output" ? "tab active" : "tab"} onClick={() => setOutputTab("output")}>Output</button>
+            <button type="button" className={outputTab === "logs" ? "tab active" : "tab"} onClick={() => setOutputTab("logs")}>Logs / errors</button>
+            {isDev && (
+              <button type="button" className={outputTab === "html" ? "tab active" : "tab"} onClick={() => setOutputTab("html")}>Generated HTML</button>
+            )}
+          </div>
+
+          {scanBanner === "warn" && <div className="scan-banner warn">You proceeded despite scan warning.</div>}
+          {scanBanner === "off" && <div className="scan-banner off">Scan disabled (red team mode).</div>}
+
+          <div className="tab-content">
+            {outputTab === "output" && (
+              <CalculatorViewer
+                key={viewerKey}
+                artifactHtml={currentArtifact.artifactHtml}
+                calcId={currentArtifact.calcId}
+                versionId={currentArtifact.versionId}
+              />
+            )}
+            {outputTab === "logs" && (
+              <div className="log-panel">
+                {generateRefusal && (
+                  <div className="refusal">
+                    <strong>Refused: {generateRefusal.code}</strong>
+                    <div>{generateRefusal.message}</div>
+                    {generateRefusal.details && generateRefusal.details.length > 0 && (
+                      <ul className="refusal-issues">
+                        {generateRefusal.details.map((detail, index) => (
+                          <li key={`${detail.code ?? "issue"}-${index}`}>
+                            {formatRefusalDetail(detail)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="refusal-alt">Try instead: {generateRefusal.safeAlternative}</div>
+                  </div>
+                )}
+                {generateDumpPaths.length > 0 && (
+                  <div className="dump-paths">
+                    <strong>Debug dump paths</strong>
+                    <ul>
+                      {generateDumpPaths.map((dumpPath, index) => (
+                        <li key={`${dumpPath}-${index}`}>{dumpPath}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {!generateRefusal && generateDumpPaths.length === 0 && (
+                  <p className="status">No logs yet. Generate a calculator to view trace-linked diagnostics.</p>
+                )}
+              </div>
+            )}
+            {isDev && outputTab === "html" && (
+              <pre className="html-preview">{currentArtifact.artifactHtml}</pre>
+            )}
+          </div>
+          {currentArtifact.calcId && currentArtifact.versionId && (
+            <p className="status">
+              Loaded {currentArtifact.calcId} v{currentArtifact.versionId}
+            </p>
+          )}
+        </section>
+      </main>
+
+      <section className={historyDrawerOpen ? "bottom-drawer open" : "bottom-drawer"}>
+        <div className="bottom-drawer-header">
+          <button type="button" className="secondary" onClick={() => setHistoryDrawerOpen((open) => !open)}>
+            {historyDrawerOpen ? "Hide history" : "My calculators"}
+          </button>
+        </div>
+        {historyDrawerOpen && (
+          <div className="bottom-drawer-content">
+            <section className="panel">
+              <h2>My calculators</h2>
+              <div className="actions">
+                <button type="button" onClick={loadCalcs} disabled={loadingCalcs}>
+                  {loadingCalcs ? "Loading..." : "Refresh list"}
                 </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {currentArtifact.calcId && currentArtifact.versionId && (
-          <p className="status">
-            Loaded {currentArtifact.calcId} v{currentArtifact.versionId}
-          </p>
+                {calcsError && <span className="error">Error: {calcsError}</span>}
+              </div>
+              {calcs.length === 0 && !loadingCalcs && <p>No calculators saved yet.</p>}
+              {calcs.length > 0 && (
+                <ul className="calc-list">
+                  {calcs.map((calc) => (
+                    <li key={calc.calcId} className="calc-item">
+                      <div>
+                        <strong>{calc.title}</strong>
+                        <div className="calc-meta">
+                          Updated {new Date(calc.updatedAt).toLocaleString()}
+                        </div>
+                        <div className="calc-meta">ID {calc.calcId}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void loadVersion(calc.calcId, calc.currentVersionId)
+                        }
+                      >
+                        Load
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="panel">
+              <h2>API status</h2>
+              <button type="button" onClick={checkHealth}>
+                Check health
+              </button>
+              {error && <p className="error">Error: {error}</p>}
+              {status && (
+                <dl>
+                  <div>
+                    <dt>Ok</dt>
+                    <dd>{String(status.ok)}</dd>
+                  </div>
+                  <div>
+                    <dt>Service</dt>
+                    <dd>{status.service}</dd>
+                  </div>
+                  <div>
+                    <dt>Build</dt>
+                    <dd>{status.build}</dd>
+                  </div>
+                  <div>
+                    <dt>Trace ID</dt>
+                    <dd>{traceId ?? status.traceId}</dd>
+                  </div>
+                </dl>
+              )}
+            </section>
+          </div>
         )}
       </section>
       {pendingInterstitial && (
@@ -855,34 +941,6 @@ const App = () => {
           </div>
         </div>
       )}
-
-      <section className="panel">
-        <h2>API status</h2>
-        <button type="button" onClick={checkHealth}>
-          Check health
-        </button>
-        {error && <p className="error">Error: {error}</p>}
-        {status && (
-          <dl>
-            <div>
-              <dt>Ok</dt>
-              <dd>{String(status.ok)}</dd>
-            </div>
-            <div>
-              <dt>Service</dt>
-              <dd>{status.service}</dd>
-            </div>
-            <div>
-              <dt>Build</dt>
-              <dd>{status.build}</dd>
-            </div>
-            <div>
-              <dt>Trace ID</dt>
-              <dd>{traceId ?? status.traceId}</dd>
-            </div>
-          </dl>
-        )}
-      </section>
     </div>
   );
 };
