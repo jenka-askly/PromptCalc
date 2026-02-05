@@ -132,3 +132,9 @@ Security Risks: None.
 **How to run tests**
 - `npm --workspace apps/api test`
 - `npm --workspace apps/web run build`
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Replaced the red-team typed arming phrase with a Yes/No control plus an explicit confirmation modal before arming.
+- Kept safety behavior intact: dev-only gating, metadata-only logging, and per-request “Proceed anyway” interstitials for warn/off flows.
+- Hardened server request handling to ignore crafted proceed overrides when red-team capability is unavailable; updated UI/API tests accordingly.

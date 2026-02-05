@@ -52,6 +52,28 @@ describe("red-team generation pipeline", () => {
     expect(runGenerator).not.toHaveBeenCalled();
   });
 
+  it("enforce mode ignores proceedOverride even when request is tampered", async () => {
+    const runPromptScan = vi.fn(async () => ({
+      allowed: false,
+      refusalCode: "DISALLOWED_NETWORK",
+      reason: "Networking requested",
+      categories: ["networking"],
+    }));
+    const runGenerator = vi.fn(async () => ({ calcId: "calc-1" }));
+
+    const result = await runGenerationPipeline({
+      mode: "enforce",
+      redTeamArmed: true,
+      proceedOverride: true,
+      runPromptScan,
+      runGenerator,
+    });
+
+    expect(result.kind).toBe("scan_block");
+    expect(runPromptScan).toHaveBeenCalledTimes(1);
+    expect(runGenerator).not.toHaveBeenCalled();
+  });
+
   it("warn mode with token returns scan_warn, then proceeds when override is set", async () => {
     const runPromptScan = vi.fn(async () => ({
       allowed: false,

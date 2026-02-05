@@ -1,6 +1,6 @@
 /**
  * Purpose: Render the PromptCalc shell UI, persistence controls, and sandboxed calculator viewer.
- * Persists: None.
+ * Persists: Session-only red-team arming state in browser sessionStorage key promptcalc.redteam.armed.
  * Security Risks: Calls backend persistence endpoints, logs trace IDs, and renders untrusted HTML in a sandboxed iframe.
  */
 
@@ -140,7 +140,6 @@ const buildCurrentArtifact = ({
   status,
 });
 
-const RED_TEAM_PHRASE = "I UNDERSTAND THIS MAY BE UNSAFE";
 const RED_TEAM_SESSION_KEY = "promptcalc.redteam.armed";
 
 const formatRefusalDetail = (detail: GenerateRefusalDetail): string => {
@@ -180,11 +179,10 @@ const App = () => {
   const [generateStatus, setGenerateStatus] = useState<string | null>(null);
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [redTeamPhrase, setRedTeamPhrase] = useState("");
   const [redTeamArmed, setRedTeamArmed] = useState(() =>
     window.sessionStorage.getItem(RED_TEAM_SESSION_KEY) === "1"
   );
-  const [redTeamError, setRedTeamError] = useState<string | null>(null);
+  const [pendingRedTeamEnableConfirm, setPendingRedTeamEnableConfirm] = useState(false);
   const [scanBanner, setScanBanner] = useState<"warn" | "off" | null>(null);
   const [pendingInterstitial, setPendingInterstitial] = useState<
     | { kind: "scan_warn"; refusalCode: string | null; categories: string[]; reason: string }
@@ -308,6 +306,16 @@ const App = () => {
     void loadCalcs();
     void loadAuthState();
   }, []);
+
+  useEffect(() => {
+    if (redTeamCapabilityAvailable) {
+      return;
+    }
+    window.sessionStorage.removeItem(RED_TEAM_SESSION_KEY);
+    setRedTeamArmed(false);
+    setPendingRedTeamEnableConfirm(false);
+    setPendingInterstitial(null);
+  }, [redTeamCapabilityAvailable]);
 
   const checkHealth = async () => {
     setError(null);
@@ -481,15 +489,10 @@ const App = () => {
     window.location.assign("/.auth/logout?post_logout_redirect_uri=/");
   };
 
-  const armRedTeam = () => {
-    if (redTeamPhrase !== RED_TEAM_PHRASE) {
-      setRedTeamError("Phrase must match exactly to arm red-team mode.");
-      return;
-    }
+  const confirmEnableRedTeam = () => {
     window.sessionStorage.setItem(RED_TEAM_SESSION_KEY, "1");
     setRedTeamArmed(true);
-    setRedTeamPhrase("");
-    setRedTeamError(null);
+    setPendingRedTeamEnableConfirm(false);
     setGenerateStatus("Red-team override armed for this browser session.");
   };
 
@@ -497,7 +500,17 @@ const App = () => {
     window.sessionStorage.removeItem(RED_TEAM_SESSION_KEY);
     setRedTeamArmed(false);
     setPendingInterstitial(null);
-    setRedTeamPhrase("");
+    setPendingRedTeamEnableConfirm(false);
+  };
+
+  const updateRedTeamSelection = (value: "yes" | "no") => {
+    if (value === "yes") {
+      if (!redTeamArmed) {
+        setPendingRedTeamEnableConfirm(true);
+      }
+      return;
+    }
+    disarmRedTeam();
   };
 
   return (
@@ -566,25 +579,33 @@ const App = () => {
           {redTeamCapabilityAvailable && (
             <div className="redteam-panel">
               <strong>Dev red-team controls</strong>
-              <p>
-                Warning: this mode can bypass scan blocking in development. Type the exact phrase to arm for this session.
-              </p>
-              <input
-                type="text"
-                value={redTeamPhrase}
-                onChange={(event) => setRedTeamPhrase(event.target.value)}
-                placeholder={RED_TEAM_PHRASE}
-              />
+              <p>Warning: this mode can bypass scan blocking in development.</p>
+              <fieldset>
+                <legend>Bypass AI scan blocks (red team)</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="redteam-armed"
+                    value="no"
+                    checked={!redTeamArmed}
+                    onChange={() => updateRedTeamSelection("no")}
+                  />
+                  No
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="redteam-armed"
+                    value="yes"
+                    checked={redTeamArmed}
+                    onChange={() => updateRedTeamSelection("yes")}
+                  />
+                  Yes
+                </label>
+              </fieldset>
               <div className="actions">
-                <button type="button" onClick={armRedTeam} disabled={redTeamArmed}>
-                  Arm red-team mode
-                </button>
-                <button type="button" onClick={disarmRedTeam} className="secondary">
-                  Disarm
-                </button>
                 <span className="status">{redTeamArmed ? "Armed" : "Not armed"}</span>
               </div>
-              {redTeamError && <div className="error">{redTeamError}</div>}
             </div>
           )}
         </div>
@@ -728,6 +749,30 @@ const App = () => {
               </button>
               <button type="button" onClick={() => void generateCalc(true)}>
                 Proceed anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingRedTeamEnableConfirm && (
+        <div className="interstitial-overlay" role="dialog" aria-modal="true">
+          <div className="interstitial">
+            <h3>Enable red-team override?</h3>
+            <p>
+              This only applies in development mode and still requires a per-request "Proceed
+              anyway" confirmation.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="secondary"
+                autoFocus
+                onClick={() => setPendingRedTeamEnableConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button type="button" onClick={confirmEnableRedTeam}>
+                Enable
               </button>
             </div>
           </div>

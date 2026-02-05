@@ -35,7 +35,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Generated artifacts now avoid `<form>` tags and include deterministic safeguards that prevent form submission in sandboxed iframes.
 - Viewer load stability: removed fragile gating refs; ignore non-handshake messages; idempotent ping; optional token strictness.
 - Fixed PromptScanDecision schema (required+additionalProperties) causing OpenAI 400 OPENAI_BAD_REQUEST; generation unblocked.
-- Added dev-only red-team scan override controls: default enforce remains unchanged, PROMPTCALC_REDKIT=1 enables warn/off capability, typed consent phrase is required per session, and CSP/sandbox/offline constraints remain unchanged.
+- Added dev-only red-team scan override controls: default enforce remains unchanged, PROMPTCALC_REDKIT=1 enables warn/off capability, Yes/No arming with confirmation modal controls session-scoped override state, and CSP/sandbox/offline constraints remain unchanged.
 
 ## Open Issues
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
