@@ -218,3 +218,20 @@ Security Risks: None.
 - `python - <<'PY' ...` (remove `node_modules/.vite` and `apps/web/node_modules/.vite` if present)
 - `npm run dev` (failed in this environment because `concurrently` is not installed and npm registry access is blocked)
 - `rg "import\\s+[\\w$]+\\s+from\\s+['\\\"]@promptcalc/types['\\\"]" -n`
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Fixed `@promptcalc/types` entrypoint exports so web runtime imports resolve: `defaultProfile`, `normalizeProfile`, and `profileId` are now explicitly re-exported from `shared/types/index.ts` (with `RedTeamDebugProfile` as a type export).
+- Rebuilt `shared/types` to refresh `dist/index.js` and `dist/index.d.ts` with runtime export bindings from the package entrypoint.
+- Verified build output contains `defaultProfile` in `shared/types/dist/index.js`; dev-server runtime verification is blocked in this environment because required dev tools (`concurrently`, `vite`) are not installed and npm registry access is forbidden (403).
+
+**Files changed**
+- shared/types/index.ts
+- shared/types/dist/index.js (rebuilt)
+- shared/types/dist/index.d.ts (rebuilt)
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands used to verify**
+- `npm --workspace shared/types run build`
+- `npm run dev`
