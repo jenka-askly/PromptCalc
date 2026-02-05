@@ -37,6 +37,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Fixed PromptScanDecision schema (required+additionalProperties) causing OpenAI 400 OPENAI_BAD_REQUEST; generation unblocked.
 - Added dev-only red-team scan override controls: default enforce remains unchanged, PROMPTCALC_REDKIT=1 enables warn/off capability, Yes/No arming with confirmation modal controls session-scoped override state, and CSP/sandbox/offline constraints remain unchanged.
 - Resolved workspace type-import compatibility issue by ensuring consumers use named imports from `@promptcalc/types` entrypoint only (no default import / dist-path imports), then rebuilding shared types output.
+- Fixed `@promptcalc/types` entrypoint runtime exports for red-team helpers by explicitly re-exporting `defaultProfile`, `normalizeProfile`, and `profileId` from `shared/types/index.ts`, unblocking Vite browser imports from `shared/types/dist/index.js`.
 
 ## Open Issues
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).

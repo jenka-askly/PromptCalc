@@ -5,5 +5,6 @@
  */
 
 export * from "./manifest";
-export * from "./redteam";
+export { defaultProfile, normalizeProfile, profileId } from "./redteam";
+export type { RedTeamDebugProfile, ScanMode } from "./redteam";
 export * from "./refusal";
