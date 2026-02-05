@@ -8,6 +8,18 @@ Security Risks: None.
 
 ## 2026-02-04
 **Summary**
+- Stabilized calculator viewer loads with loadId/token single-flight handling, fresh iframes per load, and watchdog/message correlation.
+- Updated srcdoc bootstrap to echo loadId/token on READY and added dev logging for the viewer load pipeline.
+- Added tests for message filtering and canceled load handling, plus continuity status updates.
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- Monitor watchdog timeouts to ensure only current loads time out and stale READY messages are ignored.
+
+## 2026-02-04
+**Summary**
 - Updated generation instructions to avoid `<form>` tags and enforce button click handlers for calculators.
 - Added deterministic artifact post-processing to rewrite form buttons, prevent submit navigation, and log form presence.
 - Added unit coverage for form safety rewrites plus continuity status updates.
