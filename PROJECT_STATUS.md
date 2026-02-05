@@ -33,7 +33,7 @@ Step 5 — End-to-end prototype validation (per README).
 - The API supports generating calculators and managing versions for saved calculators.
 - AI scan rubric + post-processing guardrails align with the sandbox model; offline warnings, DOM event wiring, inline JS, postMessage, and CSP unsafe-inline are allowed while true violations are refused.
 - Generated artifacts now avoid `<form>` tags and include deterministic safeguards that prevent form submission in sandboxed iframes.
-- Artifact generation uses strict schemas and resilient fallback parsing to avoid INVALID_MODEL_OUTPUT on valid JSON responses.
+- Viewer load stability: removed fragile gating refs; ignore non-handshake messages; idempotent ping; optional token strictness.
 
 ## Open Issues
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
