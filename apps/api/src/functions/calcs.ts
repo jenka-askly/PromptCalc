@@ -23,6 +23,10 @@ import {
 } from "../generation/executionModel";
 import { resolveGenerationGate } from "../generation/gate";
 import {
+  parseArtifactGenerationOutput,
+  type ArtifactGenerationOutput,
+} from "../generation/artifactOutput";
+import {
   formatAiScanIssueSummary,
   evaluateAiScanPolicy,
   stringifyAiScanIssueSummaries,
@@ -66,12 +70,6 @@ interface PromptScanDecision {
   refusalCode?: string;
   reason: string;
   safeAlternative: string;
-}
-
-interface ArtifactGenerationResponse {
-  artifactHtml: string;
-  manifest: Record<string, unknown>;
-  notes?: string;
 }
 
 interface CodeScanDecision {
@@ -223,7 +221,7 @@ const buildJsonSchemaResponseFormat = (
   strict: true,
 });
 
-const promptScanSchema = {
+export const promptScanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -235,21 +233,35 @@ const promptScanSchema = {
   required: ["allowed", "reason", "safeAlternative"],
 };
 
-const generationSchema = {
+export const generationSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
     artifactHtml: { type: "string" },
     manifest: {
       type: "object",
-      additionalProperties: true,
+      additionalProperties: false,
+      properties: {
+        specVersion: { type: "string" },
+        title: { type: "string" },
+        executionModel: { type: "string" },
+        capabilities: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            network: { type: "boolean" },
+          },
+          required: ["network"],
+        },
+      },
+      required: ["specVersion", "title", "executionModel", "capabilities"],
     },
     notes: { type: "string" },
   },
   required: ["artifactHtml", "manifest"],
 };
 
-const codeScanSchema = {
+export const codeScanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -377,31 +389,38 @@ const buildRefusalResponse = (
 ): HttpResponseInit =>
   jsonResponse(traceId, status, buildGenerateRefusedResponse(reason));
 
-const isValidManifest = (manifest: Record<string, unknown>): boolean => {
+const getManifestValidationIssue = (manifest: Record<string, unknown>): string | null => {
   const specVersion = manifest.specVersion;
   const title = manifest.title;
   const executionModel = manifest.executionModel;
   const capabilities = manifest.capabilities;
 
   if (specVersion !== SUPPORTED_SPEC_VERSION) {
-    return false;
+    return "manifest.specVersion_invalid";
   }
 
   if (typeof title !== "string" || title.trim().length === 0) {
-    return false;
+    return "manifest.title_missing";
   }
 
   if (executionModel !== "form" && executionModel !== "expression") {
-    return false;
+    return "manifest.executionModel_invalid";
   }
 
   if (!capabilities || typeof capabilities !== "object") {
-    return false;
+    return "manifest.capabilities_missing";
   }
 
   const network = (capabilities as { network?: unknown }).network;
-  return network === false;
+  if (network !== false) {
+    return "manifest.capabilities.network_invalid";
+  }
+
+  return null;
 };
+
+const isValidManifest = (manifest: Record<string, unknown>): boolean =>
+  !getManifestValidationIssue(manifest);
 
 const parseRequestBody = async (
   req: HttpRequest
@@ -985,7 +1004,8 @@ const generateCalc = async (
             format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
           },
         },
-        "openai.prompt.scan"
+        "openai.prompt.scan",
+        { maxAttempts: 2, jsonSchemaFallback: false, devLogOutputExtraction: isDevUser }
       );
 
       promptDecision = promptScanResult.parsed;
@@ -1119,10 +1139,10 @@ const generateCalc = async (
     userText: string,
     repairText: string,
     opName: string
-  ): Promise<{ result?: ArtifactGenerationResponse; response?: HttpResponseInit }> => {
-    let generationResult: ArtifactGenerationResponse | null = null;
+  ): Promise<{ result?: ArtifactGenerationOutput; response?: HttpResponseInit }> => {
+    let generationResult: ArtifactGenerationOutput | null = null;
     try {
-      const generationResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
+      const generationResponse = await callOpenAIResponses<ArtifactGenerationOutput>(
         traceId,
         openAIConfig,
         {
@@ -1135,14 +1155,14 @@ const generateCalc = async (
           },
         },
         opName,
-        { maxAttempts: 2 }
+        { maxAttempts: 2, devLogOutputExtraction: isDevUser }
       );
 
       generationResult = generationResponse.parsed;
     } catch (error) {
       if (error instanceof OpenAIParseError) {
         try {
-          const repairResponse = await callOpenAIResponses<ArtifactGenerationResponse>(
+          const repairResponse = await callOpenAIResponses<ArtifactGenerationOutput>(
             traceId,
             openAIConfig,
             {
@@ -1155,7 +1175,7 @@ const generateCalc = async (
               },
             },
             `${opName}.repair`,
-            { maxAttempts: 1 }
+            { maxAttempts: 1, devLogOutputExtraction: isDevUser }
           );
           generationResult = repairResponse.parsed;
         } catch (repairError) {
@@ -1235,13 +1255,18 @@ const generateCalc = async (
       return generationOutcome.response;
     }
     const generationResult = generationOutcome.result;
+    const normalized = generationResult
+      ? parseArtifactGenerationOutput(generationResult)
+      : { ok: false as const, reason: "missing_result" };
 
-    if (
-      !generationResult ||
-      typeof generationResult.artifactHtml !== "string" ||
-      !generationResult.manifest ||
-      typeof generationResult.manifest !== "object"
-    ) {
+    if (!normalized.ok) {
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.generate.invalid_output",
+        reason: normalized.reason,
+      });
       const reason = buildRefusalReason(
         "INVALID_MODEL_OUTPUT",
         `Artifact generation returned invalid data. traceId=${traceId}`,
@@ -1250,10 +1275,9 @@ const generateCalc = async (
       return buildRefusalResponse(traceId, 502, reason);
     }
 
-    if (
-      "error" in generationResult &&
-      (generationResult as { error?: unknown }).error === "REFUSE"
-    ) {
+    const parsedResult = normalized.value;
+
+    if ("error" in parsedResult && (parsedResult as { error?: unknown }).error === "REFUSE") {
       const reason = buildRefusalReason(
         "MODEL_REFUSED",
         `Artifact generation refused. traceId=${traceId}`,
@@ -1262,7 +1286,7 @@ const generateCalc = async (
       return buildRefusalResponse(traceId, 200, reason);
     }
 
-    artifactBytes = Buffer.byteLength(generationResult.artifactHtml, "utf8");
+    artifactBytes = Buffer.byteLength(parsedResult.artifactHtml, "utf8");
     if (artifactBytes > config.maxArtifactBytes) {
       const reason = buildRefusalReason(
         "TOO_LARGE_ARTIFACT",
@@ -1280,21 +1304,29 @@ const generateCalc = async (
       return buildRefusalResponse(traceId, 200, reason);
     }
 
-    if (!isValidManifest(generationResult.manifest)) {
+    const manifestIssue = getManifestValidationIssue(parsedResult.manifest);
+    if (manifestIssue) {
       const reason = buildRefusalReason(
         "INVALID_MODEL_OUTPUT",
         `Artifact manifest missing required fields. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
+      logEvent({
+        level: "warn",
+        op,
+        traceId,
+        event: "artifact.generate.invalid_manifest",
+        reason: manifestIssue,
+      });
       return buildRefusalResponse(traceId, 502, reason);
     }
 
     const baseManifest = {
-      ...generationResult.manifest,
+      ...parsedResult.manifest,
       capabilities: { network: false },
       hash: "",
     } as Record<string, unknown>;
-    formSafetyResult = ensureFormSafety(generationResult.artifactHtml);
+    formSafetyResult = ensureFormSafety(parsedResult.artifactHtml);
     const readyHtml = ensureReadyBootstrap(formSafetyResult.html);
     const placeholderHtml = embedManifestInHtml(readyHtml, baseManifest);
     const manifestHash = computeSha256(placeholderHtml);
@@ -1432,7 +1464,8 @@ const generateCalc = async (
           format: buildJsonSchemaResponseFormat("ArtifactCodeScan", codeScanSchema),
         },
       },
-      "openai.artifact.scan"
+      "openai.artifact.scan",
+      { maxAttempts: 2, jsonSchemaFallback: false, devLogOutputExtraction: isDevUser }
     );
 
     const rawKeys = getObjectKeys(scanDecision.raw);

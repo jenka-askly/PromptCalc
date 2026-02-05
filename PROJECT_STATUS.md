@@ -40,6 +40,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Viewer load intermittency due to race; resolved by single-flight loadId + iframe key + message correlation.
 - DISALLOWED_PATTERN refusals when model output includes `new Function` for a standard calculator.
 - OpenAI Responses schema strictness (text.format) causes retries; currently falling back to `json_object`.
+- INVALID_MODEL_OUTPUT caused by schema invalidation + fragile fallback parsing.
 
 ## How to debug viewer load pipeline
 Look for the following dev logs in sequence:
