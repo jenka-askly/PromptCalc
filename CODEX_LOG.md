@@ -146,3 +146,31 @@ Security Risks: None.
 - Added `.promptcalc_artifacts/index.log` append entries for quick per-trace retrieval.
 - Files changed: `.gitignore`, `apps/api/src/generation/scanPolicy.ts`, `apps/api/src/generation/dumpRedTeamArtifacts.ts`, `apps/api/src/functions/calcs.ts`, `apps/api/types/node/index.d.ts`, `PROJECT_STATUS.md`, `CODEX_LOG.md`.
 - Enable by running API with `PROMPTCALC_REDKIT=1`.
+
+## 2026-02-05
+**Summary**
+- Introduced shared red-team debug profile utilities (`defaultProfile`, `normalizeProfile`, `profileId`) and wired client/server payload contracts.
+- Replaced single red-team bypass control with a full “Dev red-team debug checks” panel and added a “Copy debug header” helper.
+- Added env-gated effective profile handling in generation with per-step skip wiring and profile-aware trace metadata.
+- Added full collateral bundle dumping under `.promptcalc_artifacts/<traceId>/` when `dumpCollateral` is enabled.
+
+**Files Touched**
+- shared/types/redteam.ts
+- shared/types/index.ts
+- apps/web/src/App.tsx
+- apps/web/src/App.test.tsx
+- apps/web/src/index.css
+- apps/api/src/functions/calcs.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/test/redTeamProfile.test.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**How to use toggles**
+- Enable `PROMPTCALC_REDKIT=1`.
+- In the web app, open “Dev red-team debug checks”, set scan mode/toggles, and optionally enable “Generate all collateral when generating”.
+- Use “Copy debug header” to capture `traceId`, `profileId`, and compact effective profile JSON.
+
+**Artifacts**
+- Full bundle path: `.promptcalc_artifacts/<traceId>/`.
+- Legacy stage dumps (when full collateral is off): `.promptcalc_artifacts/{requests,responses,html}/` and index log `.promptcalc_artifacts/index.log`.

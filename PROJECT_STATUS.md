@@ -70,3 +70,9 @@ Look for the following dev logs in sequence:
 - When `PROMPTCALC_REDKIT=1`, PromptCalc now writes raw debugging artifacts (including prompt text, scan/generation requests, raw model responses, generated HTML, and error stacks) to local `.promptcalc_artifacts/` for fast investigation.
 - Output paths are logged as `[redteam_dump] traceId=<id> files=<path1>;<path2>;...` and indexed in `.promptcalc_artifacts/index.log`.
 - Never ship this behavior; remove or disable red-team dump output before deployment.
+
+## Red-team Debug Profile + collateral dump
+- Added a shared `RedTeamDebugProfile` with normalization/defaults and stable `profileId` hashing for request/response tracing.
+- Dev red-team panel now supports scan mode and per-step toggles (`strictInstructions`, `promptVerification`, `schemaEnforcement`, `htmlValidation`, `postProcess`) plus `dumpCollateral`.
+- Generate requests now carry `redTeamProfile`; server computes env-gated `effectiveProfile` and includes `traceId`, `profileId`, `effectiveProfile`, and skipped-step metadata in responses/logs.
+- When `dumpCollateral` is enabled in red-team mode, server writes a full per-trace bundle under `.promptcalc_artifacts/<traceId>/` for permutation debugging.

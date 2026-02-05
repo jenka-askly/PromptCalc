@@ -239,6 +239,19 @@ dl div {
   border: 1px solid #f59e0b;
 }
 
+
+.redteam-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.redteam-panel select {
+  padding: 6px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+}
 .scan-banner {
   padding: 10px;
   border-radius: 8px;

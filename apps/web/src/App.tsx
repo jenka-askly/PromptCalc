@@ -6,6 +6,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { defaultProfile, normalizeProfile, profileId, type RedTeamDebugProfile } from "@promptcalc/types";
+
 import { CalculatorViewer } from "./components/CalculatorViewer";
 import { BAD_CALC_HTML } from "./samples/badCalcInfiniteLoop";
 import { GOOD_CALC_HTML } from "./samples/goodCalc";
@@ -60,6 +62,9 @@ interface GenerateRefusalDetail {
 interface GenerateResponseDiagnostics {
   traceId?: string;
   dumpPaths?: string[];
+  profileId?: string;
+  effectiveProfile?: RedTeamDebugProfile;
+  skippedByProfile?: string[];
 }
 
 interface GenerateErrorResponse extends GenerateResponseDiagnostics {
@@ -169,7 +174,7 @@ const buildCurrentArtifact = ({
   status,
 });
 
-const RED_TEAM_SESSION_KEY = "promptcalc.redteam.armed";
+const RED_TEAM_PROFILE_SESSION_KEY = "promptcalc.redteam.profile";
 
 const formatRefusalDetail = (detail: GenerateRefusalDetail): string => {
   const base =
@@ -209,11 +214,20 @@ const App = () => {
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
   const [generateTraceId, setGenerateTraceId] = useState<string | null>(null);
   const [generateDumpPaths, setGenerateDumpPaths] = useState<string[]>([]);
+  const [effectiveProfileSummary, setEffectiveProfileSummary] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [redTeamArmed, setRedTeamArmed] = useState(() =>
-    window.sessionStorage.getItem(RED_TEAM_SESSION_KEY) === "1"
-  );
-  const [pendingRedTeamEnableConfirm, setPendingRedTeamEnableConfirm] = useState(false);
+  const [redTeamProfile, setRedTeamProfile] = useState<RedTeamDebugProfile>(() => {
+    const saved = window.sessionStorage.getItem(RED_TEAM_PROFILE_SESSION_KEY);
+    if (!saved) {
+      return defaultProfile();
+    }
+    try {
+      return normalizeProfile(JSON.parse(saved) as unknown);
+    } catch {
+      return defaultProfile();
+    }
+  });
+  const redTeamProfileHash = useMemo(() => profileId(redTeamProfile), [redTeamProfile]);
   const [scanBanner, setScanBanner] = useState<"warn" | "off" | null>(null);
   const [pendingInterstitial, setPendingInterstitial] = useState<
     | { kind: "scan_warn"; refusalCode: string | null; categories: string[]; reason: string }
@@ -342,11 +356,13 @@ const App = () => {
     if (redTeamCapabilityAvailable) {
       return;
     }
-    window.sessionStorage.removeItem(RED_TEAM_SESSION_KEY);
-    setRedTeamArmed(false);
-    setPendingRedTeamEnableConfirm(false);
+    setRedTeamProfile(defaultProfile());
     setPendingInterstitial(null);
   }, [redTeamCapabilityAvailable]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(RED_TEAM_PROFILE_SESSION_KEY, JSON.stringify(redTeamProfile));
+  }, [redTeamProfile]);
 
   const checkHealth = async () => {
     setError(null);
@@ -413,6 +429,7 @@ const App = () => {
     setGenerateRefusal(null);
     setGenerateTraceId(null);
     setGenerateDumpPaths([]);
+    setEffectiveProfileSummary(null);
     setCalcsError(null);
     setIsGenerating(true);
     try {
@@ -420,7 +437,10 @@ const App = () => {
         prompt: generatePrompt,
         baseCalcId: currentArtifact.calcId ?? undefined,
         baseVersionId: currentArtifact.versionId ?? undefined,
-        redTeamArmed,
+        redTeamProfile: {
+          ...redTeamProfile,
+          enabled: redTeamCapabilityAvailable,
+        },
         proceedOverride,
       };
       let requestBody = "";
@@ -447,6 +467,9 @@ const App = () => {
       const data = (await response.json()) as GenerateCalcResponse | GenerateErrorResponse;
       setGenerateTraceId(typeof data.traceId === "string" ? data.traceId : null);
       setGenerateDumpPaths(Array.isArray(data.dumpPaths) ? data.dumpPaths : []);
+      if (data.effectiveProfile) {
+        setEffectiveProfileSummary(`profileId=${data.profileId ?? "n/a"} ${JSON.stringify(data.effectiveProfile)}`);
+      }
       if (!response.ok) {
         const errorResponse = data as GenerateErrorResponse;
         throw new Error(errorResponse.error?.message ?? `Generate failed (${response.status})`);
@@ -539,28 +562,22 @@ const App = () => {
     window.location.assign("/.auth/logout?post_logout_redirect_uri=/");
   };
 
-  const confirmEnableRedTeam = () => {
-    window.sessionStorage.setItem(RED_TEAM_SESSION_KEY, "1");
-    setRedTeamArmed(true);
-    setPendingRedTeamEnableConfirm(false);
-    setGenerateStatus("Red-team override armed for this browser session.");
+  const updateRedTeamProfile = (patch: Partial<RedTeamDebugProfile>) => {
+    setRedTeamProfile((previous) => normalizeProfile({ ...previous, ...patch }));
   };
 
-  const disarmRedTeam = () => {
-    window.sessionStorage.removeItem(RED_TEAM_SESSION_KEY);
-    setRedTeamArmed(false);
-    setPendingInterstitial(null);
-    setPendingRedTeamEnableConfirm(false);
-  };
-
-  const updateRedTeamSelection = (value: "yes" | "no") => {
-    if (value === "yes") {
-      if (!redTeamArmed) {
-        setPendingRedTeamEnableConfirm(true);
-      }
-      return;
-    }
-    disarmRedTeam();
+  const copyDebugHeader = async () => {
+    const effective = {
+      ...redTeamProfile,
+      enabled: redTeamCapabilityAvailable && redTeamProfile.enabled,
+    };
+    const header = [
+      `traceId=${generateTraceId ?? "n/a"}` ,
+      `profileId=${redTeamProfileHash}`,
+      `effectiveProfile=${JSON.stringify(effective)}`,
+    ].join("\n");
+    await navigator.clipboard.writeText(header);
+    setGenerateStatus("Copied debug header to clipboard.");
   };
 
   return (
@@ -608,6 +625,7 @@ const App = () => {
             </button>
             {generateStatus && <span className="status">{generateStatus}</span>}
             {generateTraceId && <span className="status">Trace ID: {generateTraceId}</span>}
+            {effectiveProfileSummary && <span className="status">{effectiveProfileSummary}</span>}
           </div>
           {generateRefusal && (
             <div className="refusal">
@@ -639,33 +657,38 @@ const App = () => {
           )}
           {redTeamCapabilityAvailable && (
             <div className="redteam-panel">
-              <strong>Dev red-team controls</strong>
-              <p>Warning: this mode can bypass scan blocking in development.</p>
-              <fieldset>
-                <legend>Bypass AI scan blocks (red team)</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="redteam-armed"
-                    value="no"
-                    checked={!redTeamArmed}
-                    onChange={() => updateRedTeamSelection("no")}
-                  />
-                  No
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="redteam-armed"
-                    value="yes"
-                    checked={redTeamArmed}
-                    onChange={() => updateRedTeamSelection("yes")}
-                  />
-                  Yes
-                </label>
-              </fieldset>
+              <strong>Dev red-team debug checks</strong>
+              <p>Dev-only controls (PROMPTCALC_REDKIT=1). Use for permutation debugging only.</p>
+              <label>
+                Red-team profile enabled
+                <input
+                  type="checkbox"
+                  checked={redTeamProfile.enabled}
+                  onChange={(event) => updateRedTeamProfile({ enabled: event.target.checked })}
+                />
+              </label>
+              <label>
+                Scan mode
+                <select
+                  value={redTeamProfile.scanMode}
+                  onChange={(event) =>
+                    updateRedTeamProfile({ scanMode: event.target.value as RedTeamDebugProfile["scanMode"] })
+                  }
+                >
+                  <option value="enforce">enforce</option>
+                  <option value="warn">warn</option>
+                  <option value="off">off</option>
+                </select>
+              </label>
+              <label><input type="checkbox" checked={redTeamProfile.strictInstructions} onChange={(event) => updateRedTeamProfile({ strictInstructions: event.target.checked })} /> strictInstructions</label>
+              <label><input type="checkbox" checked={redTeamProfile.promptVerification} onChange={(event) => updateRedTeamProfile({ promptVerification: event.target.checked })} /> promptVerification</label>
+              <label><input type="checkbox" checked={redTeamProfile.schemaEnforcement} onChange={(event) => updateRedTeamProfile({ schemaEnforcement: event.target.checked })} /> schemaEnforcement</label>
+              <label><input type="checkbox" checked={redTeamProfile.htmlValidation} onChange={(event) => updateRedTeamProfile({ htmlValidation: event.target.checked })} /> htmlValidation</label>
+              <label><input type="checkbox" checked={redTeamProfile.postProcess} onChange={(event) => updateRedTeamProfile({ postProcess: event.target.checked })} /> postProcess</label>
+              <label><input type="checkbox" checked={redTeamProfile.dumpCollateral} onChange={(event) => updateRedTeamProfile({ dumpCollateral: event.target.checked })} /> Generate all collateral when generating</label>
               <div className="actions">
-                <span className="status">{redTeamArmed ? "Armed" : "Not armed"}</span>
+                <span className="status">profileId: {redTeamProfileHash}</span>
+                <button type="button" onClick={() => void copyDebugHeader()}>Copy debug header</button>
               </div>
             </div>
           )}
@@ -810,30 +833,6 @@ const App = () => {
               </button>
               <button type="button" onClick={() => void generateCalc(true)}>
                 Proceed anyway
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {pendingRedTeamEnableConfirm && (
-        <div className="interstitial-overlay" role="dialog" aria-modal="true">
-          <div className="interstitial">
-            <h3>Enable red-team override?</h3>
-            <p>
-              This only applies in development mode and still requires a per-request "Proceed
-              anyway" confirmation.
-            </p>
-            <div className="actions">
-              <button
-                type="button"
-                className="secondary"
-                autoFocus
-                onClick={() => setPendingRedTeamEnableConfirm(false)}
-              >
-                Cancel
-              </button>
-              <button type="button" onClick={confirmEnableRedTeam}>
-                Enable
               </button>
             </div>
           </div>

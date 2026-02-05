@@ -68,9 +68,58 @@ interface GenerateCalcRequest {
   prompt: string;
   baseCalcId?: string;
   baseVersionId?: string;
-  redTeamArmed?: boolean;
+  redTeamProfile?: RedTeamDebugProfile;
   proceedOverride?: boolean;
 }
+type ScanMode = "enforce" | "warn" | "off";
+
+type RedTeamDebugProfile = {
+  enabled: boolean;
+  scanMode: ScanMode;
+  strictInstructions: boolean;
+  promptVerification: boolean;
+  schemaEnforcement: boolean;
+  htmlValidation: boolean;
+  postProcess: boolean;
+  dumpCollateral: boolean;
+};
+
+const defaultProfile = (): RedTeamDebugProfile => ({
+  enabled: false,
+  scanMode: "enforce",
+  strictInstructions: true,
+  promptVerification: true,
+  schemaEnforcement: true,
+  htmlValidation: true,
+  postProcess: true,
+  dumpCollateral: false,
+});
+
+const normalizeProfile = (input: unknown): RedTeamDebugProfile => {
+  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const base = defaultProfile();
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
+    scanMode: raw.scanMode === "warn" || raw.scanMode === "off" || raw.scanMode === "enforce" ? raw.scanMode : base.scanMode,
+    strictInstructions: typeof raw.strictInstructions === "boolean" ? raw.strictInstructions : base.strictInstructions,
+    promptVerification: typeof raw.promptVerification === "boolean" ? raw.promptVerification : base.promptVerification,
+    schemaEnforcement: typeof raw.schemaEnforcement === "boolean" ? raw.schemaEnforcement : base.schemaEnforcement,
+    htmlValidation: typeof raw.htmlValidation === "boolean" ? raw.htmlValidation : base.htmlValidation,
+    postProcess: typeof raw.postProcess === "boolean" ? raw.postProcess : base.postProcess,
+    dumpCollateral: typeof raw.dumpCollateral === "boolean" ? raw.dumpCollateral : base.dumpCollateral,
+  };
+};
+
+const profileId = (profile: RedTeamDebugProfile): string => {
+  const source = JSON.stringify(profile, Object.keys(profile).sort());
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0").slice(0, 8);
+};
+
 
 interface PromptScanDecision {
   allowed: boolean;
@@ -226,12 +275,13 @@ const getObjectKeys = (value: unknown): string[] =>
 
 const buildJsonSchemaResponseFormat = (
   name: string,
-  schema: Record<string, unknown>
+  schema: Record<string, unknown>,
+  strict = true
 ): OpenAITextFormat => ({
   type: "json_schema",
   name,
   schema,
-  strict: true,
+  strict,
 });
 
 export const promptScanSchema = {
@@ -399,12 +449,16 @@ const buildRefusalResponse = (
   traceId: string,
   status: number,
   reason: RefusalReason,
-  dumpPaths?: string[]
+  dumpPaths?: string[],
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
 ): HttpResponseInit =>
   jsonResponse(traceId, status, {
     ...buildGenerateScanBlockResponse(reason),
     traceId,
     dumpPaths,
+    effectiveProfile: debug?.effectiveProfile,
+    profileId: debug?.profileId,
+    skippedByProfile: debug?.skippedByProfile,
   });
 
 const getManifestValidationIssue = (manifest: Record<string, unknown>): string | null => {
@@ -458,6 +512,36 @@ const parseGenerateRequestBody = async (
   } catch {
     return null;
   }
+};
+
+
+const resolveEffectiveRedTeamProfile = (
+  requestedProfile: unknown,
+  env: NodeJS.ProcessEnv = process.env
+): RedTeamDebugProfile => {
+  const requested = normalizeProfile(requestedProfile);
+  const defaults = defaultProfile();
+  const redKitEnabled = env.PROMPTCALC_REDKIT === "1";
+  const scanOffEnabled = env.PROMPTCALC_SCAN_OFF === "1";
+
+  if (!redKitEnabled) {
+    return {
+      ...defaults,
+      enabled: false,
+      scanMode: "enforce",
+      dumpCollateral: false,
+    };
+  }
+
+  const normalizedEnabled = requested.enabled === true;
+  const scanMode: ScanMode =
+    requested.scanMode === "off" && !scanOffEnabled ? "warn" : requested.scanMode;
+
+  return {
+    ...requested,
+    enabled: normalizedEnabled,
+    scanMode,
+  };
 };
 
 const embedManifestInHtml = (
@@ -909,8 +993,11 @@ const generateCalc = async (
   let promptForDump = "";
   let modelForDump = "unknown";
   let scanPolicyModeForDump: "enforce" | "warn" | "off" = "enforce";
-  let redTeamArmedForDump = false;
+  let effectiveProfileForDump = defaultProfile();
+  let effectiveProfileIdForDump = profileId(effectiveProfileForDump);
   let overrideUsedForDump = false;
+  let systemInstructionsForDump = "";
+  const skippedByProfile = new Set<string>();
   let lastScanRequest: unknown;
   let lastScanResponseRaw: unknown;
   let lastGenRequest: unknown;
@@ -1003,13 +1090,14 @@ const generateCalc = async (
     };
 
     const scanPolicyConfig = resolveScanPolicyConfig();
-    const configuredScanPolicyMode = scanPolicyConfig.mode;
-    const redTeamArmed = scanPolicyConfig.redTeamCapabilityAvailable && body.redTeamArmed === true;
-    const proceedOverride =
-      scanPolicyConfig.redTeamCapabilityAvailable && body.proceedOverride === true;
-    const scanPolicyMode = resolveRuntimeScanPolicyMode(configuredScanPolicyMode, redTeamArmed);
+    const effectiveProfile = resolveEffectiveRedTeamProfile(body.redTeamProfile);
+    const effectiveProfileHash = profileId(effectiveProfile);
+    const redTeamEnabled = scanPolicyConfig.redTeamCapabilityAvailable && effectiveProfile.enabled;
+    const proceedOverride = redTeamEnabled && body.proceedOverride === true;
+    const scanPolicyMode = resolveRuntimeScanPolicyMode(effectiveProfile.scanMode, redTeamEnabled);
     scanPolicyModeForDump = scanPolicyMode;
-    redTeamArmedForDump = redTeamArmed;
+    effectiveProfileForDump = effectiveProfile;
+    effectiveProfileIdForDump = effectiveProfileHash;
     let scanOutcome: "allow" | "deny" | "error" | "skipped" = "allow";
     let overrideUsed = false;
 
@@ -1036,8 +1124,17 @@ const generateCalc = async (
           ts: new Date().toISOString(),
           model: config.model,
           scanPolicyMode: scanPolicyMode,
-          overrideArmed: redTeamArmed,
+          overrideArmed: redTeamEnabled,
           overrideUsed: overrideUsedForDump,
+          profileId: effectiveProfileHash,
+          effectiveProfile,
+          envFlags: {
+            PROMPTCALC_REDKIT: process.env.PROMPTCALC_REDKIT === "1",
+            PROMPTCALC_SCAN_OFF: process.env.PROMPTCALC_SCAN_OFF === "1",
+          },
+          skippedSteps: [...skippedByProfile],
+          dumpCollateral: effectiveProfile.dumpCollateral,
+          systemInstructions: systemInstructionsForDump,
         },
       });
       if (dumped?.paths?.length) {
@@ -1051,12 +1148,22 @@ const generateCalc = async (
       traceId,
       event: "scan.policy",
       scan_policy_mode: scanPolicyMode,
-      override_armed: redTeamArmed,
+      override_armed: redTeamEnabled,
       override_used: false,
     });
 
     let promptDecision: PromptScanDecision | null = null;
-    if (configuredScanPolicyMode === "off" && redTeamArmed) {
+    if (!effectiveProfile.promptVerification) {
+      scanOutcome = "skipped";
+      skippedByProfile.add("promptVerification");
+      logEvent({
+        level: "info",
+        op,
+        traceId,
+        event: "prompt.scan.skipped_by_profile",
+        profileId: effectiveProfileHash,
+      });
+    } else if (scanPolicyMode === "off" && redTeamEnabled) {
       scanOutcome = "skipped";
       if (!proceedOverride) {
         logEvent({
@@ -1074,6 +1181,9 @@ const generateCalc = async (
           ...buildGenerateScanSkippedResponse(),
           traceId,
           dumpPaths,
+          effectiveProfile,
+          profileId: effectiveProfileHash,
+          skippedByProfile: [...skippedByProfile],
         });
       }
       overrideUsed = true;
@@ -1104,7 +1214,7 @@ const generateCalc = async (
           ],
           max_output_tokens: 350,
           text: {
-            format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
+            format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema, effectiveProfile.schemaEnforcement),
           },
         };
         lastScanRequest = scanRequestPayload;
@@ -1145,7 +1255,7 @@ const generateCalc = async (
             message: error.message,
             scan_policy_mode: scanPolicyMode,
             scan_outcome: "error",
-            override_armed: redTeamArmed,
+            override_armed: redTeamEnabled,
             override_used: false,
           });
           await dumpArtifacts({
@@ -1173,7 +1283,7 @@ const generateCalc = async (
           message: error instanceof Error ? error.message : "unknown error",
           scan_policy_mode: scanPolicyMode,
           scan_outcome: "error",
-          override_armed: redTeamArmed,
+          override_armed: redTeamEnabled,
           override_used: false,
         });
         await dumpArtifacts({
@@ -1186,7 +1296,7 @@ const generateCalc = async (
             type: error instanceof Error ? error.name : typeof error,
           },
         });
-        return buildRefusalResponse(traceId, 502, reason, dumpPaths);
+        return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
       }
 
       scanOutcome = promptDecision?.allowed ? "allow" : "deny";
@@ -1201,12 +1311,12 @@ const generateCalc = async (
         categories: refusalCategories,
         scan_policy_mode: scanPolicyMode,
         scan_outcome: scanOutcome,
-        override_armed: redTeamArmed,
+        override_armed: redTeamEnabled,
         override_used: false,
       });
 
       if (promptDecision && !promptDecision.allowed) {
-        if (scanPolicyMode === "warn" && redTeamArmed) {
+        if (scanPolicyMode === "warn" && redTeamEnabled) {
           if (!proceedOverride) {
             await dumpArtifacts({
               stage: "scan",
@@ -1221,6 +1331,9 @@ const generateCalc = async (
               }),
               traceId,
               dumpPaths,
+              effectiveProfile,
+              profileId: effectiveProfileHash,
+              skippedByProfile: [...skippedByProfile],
             });
           }
           overrideUsed = true;
@@ -1231,17 +1344,26 @@ const generateCalc = async (
             promptDecision.reason,
             promptDecision.safeAlternative
           );
-          return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+          return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
         }
       }
     }
 
   const expectedExecutionModel = selectExecutionModelFromPrompt(prompt);
+  if (!effectiveProfile.strictInstructions) {
+    skippedByProfile.add("strictInstructions");
+  }
+  const strictInstructionLines = effectiveProfile.strictInstructions
+    ? [
+        "Never use eval, Function, new Function, setTimeout(string), setInterval(string), or dynamic script injection.",
+          ]
+    : [
+        "Prefer conservative offline HTML/JS with no dynamic code execution.",
+      ];
   const generationSystem = [
     "Return JSON only. No markdown. No prose.",
     "You generate a single-file offline calculator HTML artifact for PromptCalc.",
-    "Never use eval, Function, new Function, setTimeout(string), setInterval(string), or dynamic script injection.",
-    "Do not generate any dynamic code execution.",
+    ...strictInstructionLines,
     "Do not generate any <script src=...>, <link ...>, @import, or url(...).",
     "All logic must be implemented with ordinary named functions and event listeners (e.g., addEventListener).",
     "No network access. No connect-src usage beyond 'none'.",
@@ -1310,6 +1432,7 @@ const generateCalc = async (
     return lines.join("\\n");
   };
 
+  systemInstructionsForDump = generationSystem;
   const generationUser = buildGenerationUser(prompt);
   const repairUser = buildRepairUser(prompt);
   const retryUser = buildGenerationUser(prompt, retryNotice);
@@ -1342,7 +1465,7 @@ const generateCalc = async (
           { role: "user", content: [{ type: "input_text", text: userText }] },
         ],
         text: {
-          format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+          format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema, effectiveProfile.schemaEnforcement),
         },
       };
       lastGenRequest = generationRequestPayload;
@@ -1368,7 +1491,7 @@ const generateCalc = async (
               { role: "user", content: [{ type: "input_text", text: repairText }] },
             ],
             text: {
-              format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+              format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema, effectiveProfile.schemaEnforcement),
             },
           };
           lastGenRequest = repairRequestPayload;
@@ -1413,7 +1536,7 @@ const generateCalc = async (
             message: repairError instanceof Error ? repairError.message : "unknown error",
           });
           await dumpGenerationError(repairError);
-          return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths) };
+          return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
         }
       } else if (error instanceof OpenAIBadRequestError) {
         await dumpGenerationError(error);
@@ -1434,7 +1557,7 @@ const generateCalc = async (
           message: error instanceof Error ? error.message : "unknown error",
         });
         await dumpGenerationError(error);
-        return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths) };
+        return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
       }
 
       logEvent({
@@ -1486,7 +1609,7 @@ const generateCalc = async (
         `Artifact generation returned invalid data. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
     const parsedResult = normalized.value;
@@ -1497,7 +1620,7 @@ const generateCalc = async (
         `Artifact generation refused. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
     artifactBytes = Buffer.byteLength(parsedResult.artifactHtml, "utf8");
@@ -1515,7 +1638,7 @@ const generateCalc = async (
         artifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
     const manifestIssue = getManifestValidationIssue(parsedResult.manifest);
@@ -1532,7 +1655,7 @@ const generateCalc = async (
         event: "artifact.generate.invalid_manifest",
         reason: manifestIssue,
       });
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
     const baseManifest = {
@@ -1540,8 +1663,16 @@ const generateCalc = async (
       capabilities: { network: false },
       hash: "",
     } as Record<string, unknown>;
-    formSafetyResult = ensureFormSafety(parsedResult.artifactHtml);
-    const readyHtml = ensureReadyBootstrap(formSafetyResult.html);
+    const postProcessInputHtml = parsedResult.artifactHtml;
+    if (!effectiveProfile.postProcess) {
+      skippedByProfile.add("postProcess");
+      formSafetyResult = { html: postProcessInputHtml, containsForm: false };
+    } else {
+      formSafetyResult = ensureFormSafety(postProcessInputHtml);
+    }
+    const readyHtml = effectiveProfile.postProcess
+      ? ensureReadyBootstrap(formSafetyResult.html)
+      : formSafetyResult.html;
     const placeholderHtml = embedManifestInHtml(readyHtml, baseManifest);
     const manifestHash = computeSha256(placeholderHtml);
     finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
@@ -1562,7 +1693,7 @@ const generateCalc = async (
         artifactBytes: finalArtifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
     if (
@@ -1580,11 +1711,14 @@ const generateCalc = async (
         traceId,
         event: "artifact.evaluator.missing",
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
-    const scanResult = scanArtifactHtml(finalHtml, policy);
-    if (!scanResult.ok) {
+    if (!effectiveProfile.htmlValidation) {
+      skippedByProfile.add("htmlValidation");
+    } else {
+      const scanResult = scanArtifactHtml(finalHtml, policy);
+      if (!scanResult.ok) {
       const reason = buildRefusalReason(
         scanResult.code,
         scanResult.message,
@@ -1611,7 +1745,8 @@ const generateCalc = async (
       if (shouldRetry) {
         continue;
       }
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      }
     }
 
     logEvent({
@@ -1630,10 +1765,13 @@ const generateCalc = async (
       `Artifact generation did not produce a valid manifest. traceId=${traceId}`,
       "Try a simpler offline calculator prompt."
     );
-    return buildRefusalResponse(traceId, 502, reason, dumpPaths);
+    return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
   }
 
-  try {
+  if (!effectiveProfile.htmlValidation) {
+    skippedByProfile.add("aiScan");
+  } else {
+    try {
     const codeScanSystem = [
       "Return JSON only. No markdown. No prose.",
       "Review the HTML and decide if it is safe for an offline, sandboxed calculator artifact.",
@@ -1675,7 +1813,7 @@ const generateCalc = async (
         ],
         max_output_tokens: 300,
         text: {
-          format: buildJsonSchemaResponseFormat("ArtifactCodeScan", codeScanSchema),
+          format: buildJsonSchemaResponseFormat("ArtifactCodeScan", codeScanSchema, effectiveProfile.schemaEnforcement),
         },
       },
       "openai.artifact.scan",
@@ -1758,7 +1896,7 @@ const generateCalc = async (
         issues: issueLog.summaryJson,
         issueSummaryLines: issueLog.summaryLines,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
     if (parsedIssues.length > 0) {
       const allowedLog = buildAiScanIssueLogPayload(allowed);
@@ -1803,8 +1941,9 @@ const generateCalc = async (
         "AI code scan failed.",
         "Use a smaller, simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
+  }
   }
 
     await dumpArtifacts({
@@ -1820,7 +1959,7 @@ const generateCalc = async (
         "Generated manifest is missing required fields.",
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths);
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
     }
 
     const calcId = normalizeId(body.baseCalcId || randomUUID());
@@ -1909,7 +2048,7 @@ const generateCalc = async (
       versionId,
       scan_policy_mode: scanPolicyMode,
       scan_outcome: scanOutcome,
-      override_armed: redTeamArmed,
+      override_armed: redTeamEnabled,
       override_used: overrideUsed,
     });
 
@@ -1920,6 +2059,9 @@ const generateCalc = async (
       ...buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed),
       traceId,
       dumpPaths,
+      effectiveProfile,
+      profileId: effectiveProfileHash,
+      skippedByProfile: [...skippedByProfile],
     });
   } catch (error) {
     const dumped = await dumpRedTeamArtifacts({
@@ -1939,8 +2081,17 @@ const generateCalc = async (
         ts: new Date().toISOString(),
         model: modelForDump,
         scanPolicyMode: scanPolicyModeForDump,
-        overrideArmed: redTeamArmedForDump,
+        overrideArmed: effectiveProfileForDump.enabled,
         overrideUsed: overrideUsedForDump,
+        profileId: effectiveProfileIdForDump,
+        effectiveProfile: effectiveProfileForDump,
+        envFlags: {
+          PROMPTCALC_REDKIT: process.env.PROMPTCALC_REDKIT === "1",
+          PROMPTCALC_SCAN_OFF: process.env.PROMPTCALC_SCAN_OFF === "1",
+        },
+        skippedSteps: [...skippedByProfile],
+        dumpCollateral: effectiveProfileForDump.dumpCollateral,
+        systemInstructions: systemInstructionsForDump,
       },
     });
     if (dumped?.paths?.length) {
@@ -1970,6 +2121,9 @@ const generateCalc = async (
       },
       traceId,
       dumpPaths,
+      effectiveProfile: effectiveProfileForDump,
+      profileId: effectiveProfileIdForDump,
+      skippedByProfile: [...skippedByProfile],
     });
   }
 };
