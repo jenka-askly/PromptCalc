@@ -202,19 +202,34 @@ const buildOpenAIBadRequestRefusal = (): RefusalReason =>
 const buildOpenAIBadRequestResponse = (
   traceId: string,
   status: number,
-  dumpPaths?: string[]
+  dumpPaths?: string[],
+  dumpDir?: string | null,
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
 ): HttpResponseInit =>
   jsonResponse(traceId, status, {
     ...buildGenerateScanBlockResponse(buildOpenAIBadRequestRefusal()),
     traceId,
+    dumpDir,
     dumpPaths,
+    effectiveProfile: debug?.effectiveProfile,
+    profileId: debug?.profileId,
+    skippedByProfile: debug?.skippedByProfile,
   });
 
-const buildOpenAIParseFailedResponse = (traceId: string, dumpPaths?: string[]): HttpResponseInit =>
+const buildOpenAIParseFailedResponse = (
+  traceId: string,
+  dumpPaths?: string[],
+  dumpDir?: string | null,
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
+): HttpResponseInit =>
   jsonResponse(traceId, 502, {
     code: "OPENAI_PARSE_FAILED",
     traceId,
+    dumpDir,
     dumpPaths,
+    effectiveProfile: debug?.effectiveProfile,
+    profileId: debug?.profileId,
+    skippedByProfile: debug?.skippedByProfile,
   });
 
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
@@ -450,11 +465,13 @@ const buildRefusalResponse = (
   status: number,
   reason: RefusalReason,
   dumpPaths?: string[],
-  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] },
+  dumpDir?: string | null
 ): HttpResponseInit =>
   jsonResponse(traceId, status, {
     ...buildGenerateScanBlockResponse(reason),
     traceId,
+    dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
     profileId: debug?.profileId,
@@ -515,14 +532,13 @@ const parseGenerateRequestBody = async (
 };
 
 
-const resolveEffectiveRedTeamProfile = (
+export const resolveEffectiveRedTeamProfile = (
   requestedProfile: unknown,
   env: NodeJS.ProcessEnv = process.env
 ): RedTeamDebugProfile => {
   const requested = normalizeProfile(requestedProfile);
   const defaults = defaultProfile();
   const redKitEnabled = env.PROMPTCALC_REDKIT === "1";
-  const scanOffEnabled = env.PROMPTCALC_SCAN_OFF === "1";
 
   if (!redKitEnabled) {
     return {
@@ -534,13 +550,10 @@ const resolveEffectiveRedTeamProfile = (
   }
 
   const normalizedEnabled = requested.enabled === true;
-  const scanMode: ScanMode =
-    requested.scanMode === "off" && !scanOffEnabled ? "warn" : requested.scanMode;
-
   return {
     ...requested,
     enabled: normalizedEnabled,
-    scanMode,
+    scanMode: requested.scanMode,
   };
 };
 
@@ -1003,6 +1016,7 @@ const generateCalc = async (
   let lastGenRequest: unknown;
   let lastGenResponseRaw: unknown;
   const dumpPaths: string[] = [];
+  let dumpDir: string | null = null;
 
   try {
     const body = await parseGenerateRequestBody(req);
@@ -1064,7 +1078,7 @@ const generateCalc = async (
         event: "generation.gated",
         code: gateReason.code,
       });
-      return buildRefusalResponse(traceId, 200, gateReason, dumpPaths);
+      return buildRefusalResponse(traceId, 200, gateReason, dumpPaths, undefined, dumpDir);
     }
 
     if (!config.apiKey || config.apiKey.trim().length === 0) {
@@ -1130,13 +1144,15 @@ const generateCalc = async (
           effectiveProfile,
           envFlags: {
             PROMPTCALC_REDKIT: process.env.PROMPTCALC_REDKIT === "1",
-            PROMPTCALC_SCAN_OFF: process.env.PROMPTCALC_SCAN_OFF === "1",
           },
           skippedSteps: [...skippedByProfile],
           dumpCollateral: effectiveProfile.dumpCollateral,
           systemInstructions: systemInstructionsForDump,
         },
       });
+      if (dumped?.dumpDir) {
+        dumpDir = dumped.dumpDir;
+      }
       if (dumped?.paths?.length) {
         dumpPaths.push(...dumped.paths);
       }
@@ -1180,6 +1196,7 @@ const generateCalc = async (
         return jsonResponse(traceId, 200, {
           ...buildGenerateScanSkippedResponse(),
           traceId,
+          dumpDir,
           dumpPaths,
           effectiveProfile,
           profileId: effectiveProfileHash,
@@ -1244,7 +1261,7 @@ const generateCalc = async (
               type: error.name,
             },
           });
-          return buildOpenAIBadRequestResponse(traceId, 502, dumpPaths);
+          return buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
         }
         if (error instanceof OpenAIParseError) {
           logEvent({
@@ -1268,7 +1285,7 @@ const generateCalc = async (
               type: error.name,
             },
           });
-          return buildOpenAIParseFailedResponse(traceId, dumpPaths);
+          return buildOpenAIParseFailedResponse(traceId, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
         }
         const reason = buildRefusalReason(
           "OPENAI_ERROR",
@@ -1296,7 +1313,7 @@ const generateCalc = async (
             type: error instanceof Error ? error.name : typeof error,
           },
         });
-        return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+        return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
       }
 
       scanOutcome = promptDecision?.allowed ? "allow" : "deny";
@@ -1330,6 +1347,7 @@ const generateCalc = async (
                 reason: promptDecision.reason,
               }),
               traceId,
+              dumpDir,
               dumpPaths,
               effectiveProfile,
               profileId: effectiveProfileHash,
@@ -1344,7 +1362,7 @@ const generateCalc = async (
             promptDecision.reason,
             promptDecision.safeAlternative
           );
-          return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+          return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
         }
       }
     }
@@ -1510,7 +1528,7 @@ const generateCalc = async (
         } catch (repairError) {
           if (repairError instanceof OpenAIBadRequestError) {
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths) };
+            return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
           }
           if (repairError instanceof OpenAIParseError) {
             logEvent({
@@ -1521,7 +1539,7 @@ const generateCalc = async (
               message: repairError.message,
             });
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths) };
+            return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
           }
           const reason = buildRefusalReason(
             "OPENAI_ERROR",
@@ -1536,11 +1554,11 @@ const generateCalc = async (
             message: repairError instanceof Error ? repairError.message : "unknown error",
           });
           await dumpGenerationError(repairError);
-          return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+          return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir) };
         }
       } else if (error instanceof OpenAIBadRequestError) {
         await dumpGenerationError(error);
-        return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths) };
+        return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
       }
 
       if (!(error instanceof OpenAIParseError)) {
@@ -1557,7 +1575,7 @@ const generateCalc = async (
           message: error instanceof Error ? error.message : "unknown error",
         });
         await dumpGenerationError(error);
-        return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+        return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir) };
       }
 
       logEvent({
@@ -1568,7 +1586,7 @@ const generateCalc = async (
         message: error.message,
       });
       await dumpGenerationError(error);
-      return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths) };
+      return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
     }
 
     return { result: generationResult ?? undefined };
@@ -1609,7 +1627,7 @@ const generateCalc = async (
         `Artifact generation returned invalid data. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     const parsedResult = normalized.value;
@@ -1620,7 +1638,7 @@ const generateCalc = async (
         `Artifact generation refused. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     artifactBytes = Buffer.byteLength(parsedResult.artifactHtml, "utf8");
@@ -1638,7 +1656,7 @@ const generateCalc = async (
         artifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     const manifestIssue = getManifestValidationIssue(parsedResult.manifest);
@@ -1655,7 +1673,7 @@ const generateCalc = async (
         event: "artifact.generate.invalid_manifest",
         reason: manifestIssue,
       });
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     const baseManifest = {
@@ -1693,7 +1711,7 @@ const generateCalc = async (
         artifactBytes: finalArtifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     if (
@@ -1711,7 +1729,7 @@ const generateCalc = async (
         traceId,
         event: "artifact.evaluator.missing",
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     if (!effectiveProfile.htmlValidation) {
@@ -1745,7 +1763,7 @@ const generateCalc = async (
       if (shouldRetry) {
         continue;
       }
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
       }
     }
 
@@ -1765,7 +1783,7 @@ const generateCalc = async (
       `Artifact generation did not produce a valid manifest. traceId=${traceId}`,
       "Try a simpler offline calculator prompt."
     );
-    return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+    return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
   }
 
   if (!effectiveProfile.htmlValidation) {
@@ -1896,7 +1914,7 @@ const generateCalc = async (
         issues: issueLog.summaryJson,
         issueSummaryLines: issueLog.summaryLines,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
     if (parsedIssues.length > 0) {
       const allowedLog = buildAiScanIssueLogPayload(allowed);
@@ -1941,7 +1959,7 @@ const generateCalc = async (
         "AI code scan failed.",
         "Use a smaller, simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
   }
   }
@@ -1959,7 +1977,7 @@ const generateCalc = async (
         "Generated manifest is missing required fields.",
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
     const calcId = normalizeId(body.baseCalcId || randomUUID());
@@ -2058,6 +2076,7 @@ const generateCalc = async (
     return jsonResponse(traceId, 200, {
       ...buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed),
       traceId,
+      dumpDir,
       dumpPaths,
       effectiveProfile,
       profileId: effectiveProfileHash,
@@ -2087,13 +2106,15 @@ const generateCalc = async (
         effectiveProfile: effectiveProfileForDump,
         envFlags: {
           PROMPTCALC_REDKIT: process.env.PROMPTCALC_REDKIT === "1",
-          PROMPTCALC_SCAN_OFF: process.env.PROMPTCALC_SCAN_OFF === "1",
         },
         skippedSteps: [...skippedByProfile],
         dumpCollateral: effectiveProfileForDump.dumpCollateral,
         systemInstructions: systemInstructionsForDump,
       },
     });
+    if (dumped?.dumpDir) {
+      dumpDir = dumped.dumpDir;
+    }
     if (dumped?.paths?.length) {
       dumpPaths.push(...dumped.paths);
     }
@@ -2120,6 +2141,7 @@ const generateCalc = async (
         type: error instanceof Error ? error.name : typeof error,
       },
       traceId,
+      dumpDir,
       dumpPaths,
       effectiveProfile: effectiveProfileForDump,
       profileId: effectiveProfileIdForDump,

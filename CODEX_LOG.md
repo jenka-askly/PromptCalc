@@ -174,3 +174,28 @@ Security Risks: None.
 **Artifacts**
 - Full bundle path: `.promptcalc_artifacts/<traceId>/`.
 - Legacy stage dumps (when full collateral is off): `.promptcalc_artifacts/{requests,responses,html}/` and index log `.promptcalc_artifacts/index.log`.
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Enforced single red-team env gate: `PROMPTCALC_REDKIT=1` now controls both UI visibility and server honor/ignore behavior for debug profile toggles.
+- Added sessionStorage persistence for dev debug profile (`promptcalc.redteam.profile`) with normalization on restore and a Reset button to clear persisted values.
+- Standardized full collateral dump paths under `.promptcalc_artifacts/<traceId>/` with deterministic filenames and surfaced `traceId` + `dumpDir`/`dumpPaths` in generation responses for UI display.
+- Hardened client generate payload construction to plain JSON and fixed event-object leakage by avoiding direct handler argument forwarding.
+
+**Files touched**
+- apps/api/src/functions/calcs.ts
+- apps/api/src/generation/scanPolicy.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/test/scanPolicyConfig.test.ts
+- apps/api/test/dumpRedTeamArtifacts.test.ts
+- apps/api/test/generateProfileGate.test.ts
+- apps/web/src/App.tsx
+- apps/web/src/App.test.tsx
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**How to use**
+- Set `PROMPTCALC_REDKIT=1` for API runtime.
+- Open web app and use "Dev red-team debug checks" toggles.
+- Enable "Generate all collateral when generating" to dump artifacts.
+- Use the UI result/error area to read `Trace ID` and `Dump folder` path, then inspect `.promptcalc_artifacts/<traceId>/`.

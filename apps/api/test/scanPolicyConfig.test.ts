@@ -21,23 +21,6 @@ describe("scan policy config", () => {
     expect(config.redTeamCapabilityAvailable).toBe(true);
   });
 
-  it("uses off when scan_off and redkit are enabled", () => {
-    const config = resolveScanPolicyConfig({
-      PROMPTCALC_REDKIT: "1",
-      PROMPTCALC_SCAN_OFF: "1",
-    } as NodeJS.ProcessEnv);
-    expect(config.mode).toBe("off");
-  });
-
-  it("does not allow off mode when redkit is disabled", () => {
-    const config = resolveScanPolicyConfig({
-      PROMPTCALC_REDKIT: "0",
-      PROMPTCALC_SCAN_OFF: "1",
-    } as NodeJS.ProcessEnv);
-    expect(config.mode).toBe("enforce");
-    expect(config.redTeamCapabilityAvailable).toBe(false);
-  });
-
   it("falls back to enforce runtime mode when not armed", () => {
     expect(resolveRuntimeScanPolicyMode("warn", false)).toBe("enforce");
     expect(resolveRuntimeScanPolicyMode("off", false)).toBe("enforce");
