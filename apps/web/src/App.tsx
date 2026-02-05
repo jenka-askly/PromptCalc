@@ -6,10 +6,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import redTeamTypes from "@promptcalc/types";
+import { defaultProfile, normalizeProfile, profileId } from "@promptcalc/types";
 import type { RedTeamDebugProfile } from "@promptcalc/types";
-
-const { defaultProfile, normalizeProfile, profileId } = redTeamTypes as typeof import("@promptcalc/types");
 
 import { CalculatorViewer } from "./components/CalculatorViewer";
 import { BAD_CALC_HTML } from "./samples/badCalcInfiniteLoop";
