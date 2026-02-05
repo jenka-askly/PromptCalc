@@ -235,3 +235,27 @@ Security Risks: None.
 **Commands used to verify**
 - `npm --workspace shared/types run build`
 - `npm run dev`
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Updated `shared/types/tsconfig.json` to override workspace CommonJS defaults and emit ESM (`module: ES2022`, `moduleResolution: Bundler`) for Vite runtime compatibility.
+- Rebuilt `@promptcalc/types`, regenerating `shared/types/dist/*` as ESM output with `export` statements.
+- Cleared Vite cache directories when present.
+- Dev server runtime verification is environment-blocked: `npm run dev` fails because `concurrently` is unavailable, and installing dependencies is blocked by npm registry 403.
+
+**Files changed**
+- shared/types/tsconfig.json
+- shared/types/dist/index.js
+- shared/types/dist/index.d.ts
+- shared/types/dist/manifest.js
+- shared/types/dist/redteam.js
+- shared/types/dist/refusal.js
+- shared/types/dist/tsconfig.tsbuildinfo
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands used**
+- `npm --workspace shared/types run build`
+- `python - <<'PY' ...` (remove `apps/web/node_modules/.vite` and `node_modules/.vite` if present)
+- `npm run dev`
+- `npm install`
