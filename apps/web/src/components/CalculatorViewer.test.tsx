@@ -145,6 +145,34 @@ describe("CalculatorViewer", () => {
     vi.useRealTimers();
   });
 
+  it("ignores non-handshake messages without setting error", async () => {
+    vi.useFakeTimers();
+    const loadId = "load-7";
+    const token = "token-7";
+    const restoreCrypto = stubHandshakeToken([loadId, token]);
+
+    const { container } = render(<CalculatorViewer artifactHtml={MINIMAL_HTML} timeoutMs={80} />);
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const fakeWindow = new EventTarget() as unknown as Window;
+
+    Object.defineProperty(iframe, "contentWindow", { value: fakeWindow });
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "PING", loadId, token },
+        source: fakeWindow as unknown as MessageEventSource,
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(30);
+
+    const statusText = container.querySelector(".viewer-status")?.textContent ?? "";
+    expect(statusText).toContain("Loading");
+
+    restoreCrypto();
+    vi.useRealTimers();
+  });
+
   it("ignores READY from a previous load after starting a new one", async () => {
     vi.useFakeTimers();
     const loadId1 = "load-5";
