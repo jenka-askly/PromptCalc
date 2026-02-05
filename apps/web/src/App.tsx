@@ -1,6 +1,6 @@
 /**
  * Purpose: Render the PromptCalc shell UI, persistence controls, and sandboxed calculator viewer.
- * Persists: Session-only red-team arming state in browser sessionStorage key promptcalc.redteam.armed.
+ * Persists: Dev-only red-team profile in browser sessionStorage key promptcalc.redteam.profile when capability is enabled.
  * Security Risks: Calls backend persistence endpoints, logs trace IDs, and renders untrusted HTML in a sandboxed iframe.
  */
 
@@ -61,6 +61,7 @@ interface GenerateRefusalDetail {
 
 interface GenerateResponseDiagnostics {
   traceId?: string;
+  dumpDir?: string | null;
   dumpPaths?: string[];
   profileId?: string;
   effectiveProfile?: RedTeamDebugProfile;
@@ -80,6 +81,7 @@ type GenerateCalcResponse =
       kind: "ok";
       status: "ok";
       traceId?: string;
+      dumpDir?: string | null;
       dumpPaths?: string[];
       calcId: string;
       versionId: string;
@@ -93,6 +95,7 @@ type GenerateCalcResponse =
       status: "refused";
       refusalReason: GenerateRefusalReason;
       traceId?: string;
+      dumpDir?: string | null;
       dumpPaths?: string[];
     }
   | {
@@ -100,6 +103,7 @@ type GenerateCalcResponse =
       status: "scan_warn";
       requiresUserProceed: true;
       traceId?: string;
+      dumpDir?: string | null;
       dumpPaths?: string[];
       scanDecision: {
         refusalCode: string | null;
@@ -112,6 +116,7 @@ type GenerateCalcResponse =
       status: "scan_skipped";
       requiresUserProceed: true;
       traceId?: string;
+      dumpDir?: string | null;
       dumpPaths?: string[];
     };
 
@@ -213,20 +218,11 @@ const App = () => {
   const [generateStatus, setGenerateStatus] = useState<string | null>(null);
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
   const [generateTraceId, setGenerateTraceId] = useState<string | null>(null);
+  const [generateDumpDir, setGenerateDumpDir] = useState<string | null>(null);
   const [generateDumpPaths, setGenerateDumpPaths] = useState<string[]>([]);
   const [effectiveProfileSummary, setEffectiveProfileSummary] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [redTeamProfile, setRedTeamProfile] = useState<RedTeamDebugProfile>(() => {
-    const saved = window.sessionStorage.getItem(RED_TEAM_PROFILE_SESSION_KEY);
-    if (!saved) {
-      return defaultProfile();
-    }
-    try {
-      return normalizeProfile(JSON.parse(saved) as unknown);
-    } catch {
-      return defaultProfile();
-    }
-  });
+  const [redTeamProfile, setRedTeamProfile] = useState<RedTeamDebugProfile>(() => defaultProfile());
   const redTeamProfileHash = useMemo(() => profileId(redTeamProfile), [redTeamProfile]);
   const [scanBanner, setScanBanner] = useState<"warn" | "off" | null>(null);
   const [pendingInterstitial, setPendingInterstitial] = useState<
@@ -353,16 +349,29 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    if (redTeamCapabilityAvailable) {
+    if (!redTeamCapabilityAvailable) {
+      setRedTeamProfile(defaultProfile());
+      setPendingInterstitial(null);
       return;
     }
-    setRedTeamProfile(defaultProfile());
-    setPendingInterstitial(null);
+    const saved = window.sessionStorage.getItem(RED_TEAM_PROFILE_SESSION_KEY);
+    if (!saved) {
+      setRedTeamProfile(defaultProfile());
+      return;
+    }
+    try {
+      setRedTeamProfile(normalizeProfile(JSON.parse(saved) as unknown));
+    } catch {
+      setRedTeamProfile(defaultProfile());
+    }
   }, [redTeamCapabilityAvailable]);
 
   useEffect(() => {
+    if (!redTeamCapabilityAvailable) {
+      return;
+    }
     window.sessionStorage.setItem(RED_TEAM_PROFILE_SESSION_KEY, JSON.stringify(redTeamProfile));
-  }, [redTeamProfile]);
+  }, [redTeamCapabilityAvailable, redTeamProfile]);
 
   const checkHealth = async () => {
     setError(null);
@@ -428,21 +437,22 @@ const App = () => {
     setGenerateStatus(null);
     setGenerateRefusal(null);
     setGenerateTraceId(null);
+    setGenerateDumpDir(null);
     setGenerateDumpPaths([]);
     setEffectiveProfileSummary(null);
     setCalcsError(null);
     setIsGenerating(true);
     try {
-      const payload = {
+      const payload: { prompt: string; redTeamProfile: RedTeamDebugProfile; proceedOverride?: boolean } = {
         prompt: generatePrompt,
-        baseCalcId: currentArtifact.calcId ?? undefined,
-        baseVersionId: currentArtifact.versionId ?? undefined,
-        redTeamProfile: {
+        redTeamProfile: normalizeProfile({
           ...redTeamProfile,
-          enabled: redTeamCapabilityAvailable,
-        },
-        proceedOverride,
+          enabled: redTeamProfile.enabled,
+        }),
       };
+      if (proceedOverride) {
+        payload.proceedOverride = true;
+      }
       let requestBody = "";
       try {
         requestBody = JSON.stringify(payload);
@@ -466,6 +476,7 @@ const App = () => {
 
       const data = (await response.json()) as GenerateCalcResponse | GenerateErrorResponse;
       setGenerateTraceId(typeof data.traceId === "string" ? data.traceId : null);
+      setGenerateDumpDir(typeof data.dumpDir === "string" ? data.dumpDir : null);
       setGenerateDumpPaths(Array.isArray(data.dumpPaths) ? data.dumpPaths : []);
       if (data.effectiveProfile) {
         setEffectiveProfileSummary(`profileId=${data.profileId ?? "n/a"} ${JSON.stringify(data.effectiveProfile)}`);
@@ -620,11 +631,12 @@ const App = () => {
             onChange={(event) => setGeneratePrompt(event.target.value)}
           />
           <div className="actions">
-            <button type="button" onClick={generateCalc} disabled={isGenerating}>
+            <button type="button" onClick={() => void generateCalc(false)} disabled={isGenerating}>
               {isGenerating ? "Generating..." : "Generate calculator"}
             </button>
             {generateStatus && <span className="status">{generateStatus}</span>}
             {generateTraceId && <span className="status">Trace ID: {generateTraceId}</span>}
+            {generateDumpDir && <span className="status">Dump folder: {generateDumpDir}</span>}
             {effectiveProfileSummary && <span className="status">{effectiveProfileSummary}</span>}
           </div>
           {generateRefusal && (
@@ -689,6 +701,10 @@ const App = () => {
               <div className="actions">
                 <span className="status">profileId: {redTeamProfileHash}</span>
                 <button type="button" onClick={() => void copyDebugHeader()}>Copy debug header</button>
+                <button type="button" onClick={() => {
+                  window.sessionStorage.removeItem(RED_TEAM_PROFILE_SESSION_KEY);
+                  setRedTeamProfile(defaultProfile());
+                }}>Reset</button>
               </div>
             </div>
           )}

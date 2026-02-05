@@ -27,13 +27,6 @@ export const resolveScanPolicyConfig = (
     };
   }
 
-  if (isEnabledFlag(env.PROMPTCALC_SCAN_OFF)) {
-    return {
-      mode: "off",
-      redTeamCapabilityAvailable: true,
-    };
-  }
-
   return {
     mode: "warn",
     redTeamCapabilityAvailable: true,

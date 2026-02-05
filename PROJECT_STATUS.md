@@ -76,3 +76,9 @@ Look for the following dev logs in sequence:
 - Dev red-team panel now supports scan mode and per-step toggles (`strictInstructions`, `promptVerification`, `schemaEnforcement`, `htmlValidation`, `postProcess`) plus `dumpCollateral`.
 - Generate requests now carry `redTeamProfile`; server computes env-gated `effectiveProfile` and includes `traceId`, `profileId`, `effectiveProfile`, and skipped-step metadata in responses/logs.
 - When `dumpCollateral` is enabled in red-team mode, server writes a full per-trace bundle under `.promptcalc_artifacts/<traceId>/` for permutation debugging.
+
+## 2026-02-05 Supplemental Red-Team Lockdown
+- Single env gate is now `PROMPTCALC_REDKIT` only. No additional env flags are honored for scan/dump behavior.
+- When `PROMPTCALC_REDKIT!=1`, server forces safe effective profile defaults (`scanMode=enforce`, strict/prompt verification/schema/html/post-process on, dumping off) and debug panel remains hidden.
+- Dev debug toggles now persist in-tab via `sessionStorage` and include a Reset action to clear persisted profile state.
+- Full collateral dumps now use deterministic per-trace folders at `.promptcalc_artifacts/<traceId>/` and UI surfaces `Trace ID` plus `Dump folder` directly in result/error status.

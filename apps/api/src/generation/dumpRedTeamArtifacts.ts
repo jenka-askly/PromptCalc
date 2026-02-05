@@ -68,7 +68,7 @@ const writeJson = async (filePath: string, payload: unknown): Promise<void> => {
   await writeFile(filePath, `${JSON.stringify(sanitizeForJson(payload), null, 2)}\n`, "utf8");
 };
 
-const dumpCollateralBundle = async (args: DumpArgs): Promise<string[]> => {
+const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; paths: string[] }> => {
   const traceDir = path.join(artifactRoot, args.traceId);
   await mkdir(traceDir, { recursive: true });
 
@@ -85,26 +85,26 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<string[]> => {
     paths.push(fullPath);
   };
 
-  await push("00_profile.json", {
+  await push("profile.json", {
     traceId: args.traceId,
     profileId: args.meta.profileId,
     effectiveProfile: args.meta.effectiveProfile,
     envFlags,
     skippedSteps: args.meta.skippedSteps ?? [],
   });
-  await push("01_prompt.txt", args.prompt ?? "", true);
-  await push("02_system.txt", args.meta.systemInstructions ?? "", true);
-  await push("03_scan_request.json", { scanRequest: args.scanRequest });
-  await push("04_scan_response.json", { scanResponseRaw: args.scanResponseRaw });
-  await push("05_gen_request.json", { genRequest: args.genRequest });
-  await push("06_gen_response_raw.json", { genResponseRaw: args.genResponseRaw });
-  await push("07_extracted.html", args.html ?? "", true);
-  await push("08_validation.json", { validation: args.validation, skippedSteps: args.meta.skippedSteps ?? [] });
+  await push("prompt.txt", args.prompt ?? "", true);
+  await push("system.txt", args.meta.systemInstructions ?? "", true);
+  await push("scan_request.json", { scanRequest: args.scanRequest });
+  await push("scan_response_raw.json", { scanResponseRaw: args.scanResponseRaw });
+  await push("gen_request.json", { genRequest: args.genRequest });
+  await push("gen_response_raw.json", { genResponseRaw: args.genResponseRaw });
+  await push("extracted.html", args.html ?? "", true);
+  await push("validation.json", { validation: args.validation, skippedSteps: args.meta.skippedSteps ?? [] });
   if (args.error) {
-    await push("09_error.json", { error: args.error });
+    await push("error.json", { error: args.error });
   }
 
-  return paths;
+  return { dumpDir: traceDir, paths };
 };
 
 const dumpLegacyStage = async (args: DumpArgs): Promise<string[]> => {
@@ -154,18 +154,20 @@ const dumpLegacyStage = async (args: DumpArgs): Promise<string[]> => {
   return paths;
 };
 
-export const dumpRedTeamArtifacts = async (args: DumpArgs): Promise<{ paths: string[] } | null> => {
+export const dumpRedTeamArtifacts = async (
+  args: DumpArgs
+): Promise<{ dumpDir: string | null; paths: string[] } | null> => {
   if (!isRedTeamEnabled()) {
     return null;
   }
 
-  const paths = args.meta.dumpCollateral
+  const dumped = args.meta.dumpCollateral
     ? await dumpCollateralBundle(args)
-    : await dumpLegacyStage(args);
+    : { dumpDir: null, paths: await dumpLegacyStage(args) };
 
   console.log(
-    `[redteam_dump] traceId=${args.traceId} profileId=${args.meta.profileId ?? "na"} files=${paths.join(";")}`
+    `[redteam_dump] traceId=${args.traceId} profileId=${args.meta.profileId ?? "na"} dumpDir=${dumped.dumpDir ?? "n/a"} files=${dumped.paths.join(";")}`
   );
 
-  return { paths };
+  return dumped;
 };
