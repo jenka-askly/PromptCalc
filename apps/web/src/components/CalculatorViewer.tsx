@@ -10,7 +10,7 @@ import { getCspTemplate } from "../policy/csp";
 
 type ViewerStatus = "loading" | "ready" | "error";
 
-type ViewerErrorCode = "WATCHDOG_TIMEOUT" | "INVALID_MESSAGE";
+type ViewerErrorCode = "WATCHDOG_TIMEOUT";
 
 interface CalculatorViewerProps {
   artifactHtml: string;
@@ -23,7 +23,7 @@ const DEFAULT_TIMEOUT_MS = 4000;
 
 const READY_BOOTSTRAP_ID = "promptcalc-ready";
 const READY_BOOTSTRAP_SCRIPT =
-  "<script id=\"promptcalc-ready\">(function(){try{let token=null;const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const sendReady=(currentToken)=>{try{const readyPayload=currentToken?{token:currentToken}:{};safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now(),...readyPayload});safePost({type:\"ready\",...readyPayload});}catch{}};const handlePing=(event)=>{try{const data=event&&event.data;if(data&&data.type===\"PROMPTCALC_PING\"&&typeof data.token===\"string\"){token=data.token;safePost({type:\"PROMPTCALC_PONG\",v:\"1\",ts:Date.now(),token});sendReady(token);}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{sendReady(token);},{once:true});}else{sendReady(token);}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
+  "<script id=\"promptcalc-ready\">(function(){try{const safePost=(payload)=>{try{window.parent.postMessage(payload,\"*\");}catch{}};const state={loadId:null,token:null,ready:false,domReady:document.readyState!==\"loading\"};const sendReady=()=>{if(state.ready||!state.loadId||!state.token){return;}state.ready=true;safePost({type:\"PROMPTCALC_READY\",v:\"1\",ts:Date.now(),loadId:state.loadId,token:state.token});};const handlePing=(event)=>{try{const data=event&&event.data;if(!data||data.type!==\"PING\"){return;}if(typeof data.loadId!==\"string\"||typeof data.token!==\"string\"){return;}state.loadId=data.loadId;state.token=data.token;sendReady();if(!state.domReady){document.addEventListener(\"DOMContentLoaded\",()=>{state.domReady=true;sendReady();},{once:true});}}catch{}};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",()=>{state.domReady=true;sendReady();},{once:true});}window.addEventListener(\"message\",handlePing);}catch{}})();</script>";
 const READY_BOOTSTRAP_REGEX = new RegExp(
   `<script[^>]*id=["']${READY_BOOTSTRAP_ID}["'][^>]*>`,
   "i"
@@ -75,25 +75,25 @@ const normalizeArtifactHtml = (artifactHtml: string, csp: string): string => {
   return ensureReadyBootstrap(html, cspMetaRegex);
 };
 
-const buildBlankDoc = (): string => "<!doctype html><html><body></body></html>";
-
 const isHandshakeMessage = (
   data: unknown
 ): data is {
-  type: "ready" | "PROMPTCALC_READY" | "PROMPTCALC_PONG";
+  type: "PROMPTCALC_READY";
+  loadId: string;
+  token: string;
   traceId?: string;
-  token?: string | null;
 } => {
   if (!data || typeof data !== "object") {
     return false;
   }
 
-  const record = data as { type?: unknown; traceId?: unknown; token?: unknown };
-  if (
-    record.type !== "ready" &&
-    record.type !== "PROMPTCALC_READY" &&
-    record.type !== "PROMPTCALC_PONG"
-  ) {
+  const record = data as {
+    type?: unknown;
+    traceId?: unknown;
+    token?: unknown;
+    loadId?: unknown;
+  };
+  if (record.type !== "PROMPTCALC_READY") {
     return false;
   }
 
@@ -101,11 +101,11 @@ const isHandshakeMessage = (
     return false;
   }
 
-  if (
-    record.token !== undefined &&
-    record.token !== null &&
-    typeof record.token !== "string"
-  ) {
+  if (typeof record.token !== "string") {
+    return false;
+  }
+
+  if (typeof record.loadId !== "string") {
     return false;
   }
 
@@ -120,6 +120,14 @@ const generateHandshakeToken = (): string => {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const computeArtifactHash = (artifactHtml: string) => {
+  let hash = 0;
+  for (let i = 0; i < artifactHtml.length; i += 1) {
+    hash = (hash * 31 + artifactHtml.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(16);
+};
+
 export const CalculatorViewer = ({
   artifactHtml,
   calcId,
@@ -129,30 +137,32 @@ export const CalculatorViewer = ({
   const cspTemplate = useMemo(() => getCspTemplate(), []);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const timerRef = useRef<number | null>(null);
+  const watchdogLoadIdRef = useRef<string | null>(null);
   const retryRef = useRef<number | null>(null);
   const rateRef = useRef({ windowStart: 0, count: 0 });
-  const handshakeRef = useRef({ ready: false, pong: false });
+  const handshakeRef = useRef({ ready: false });
   const warningLoggedRef = useRef(false);
   const listenerReadyRef = useRef(false);
   const pingPendingRef = useRef(false);
   const handshakeTokenRef = useRef<string>("");
   const iframeLoadRef = useRef(false);
+  const loadIdRef = useRef<string>("");
   const [status, setStatus] = useState<ViewerStatus>("loading");
   const [errorCode, setErrorCode] = useState<ViewerErrorCode | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
-  const [srcDoc, setSrcDoc] = useState<string>(buildBlankDoc());
-  const [retryToken, setRetryToken] = useState(0);
-  const [sawIframeLoad, setSawIframeLoad] = useState(false);
-  const [sawReady, setSawReady] = useState(false);
-  const [sawPong, setSawPong] = useState(false);
-  const [lastMsgType, setLastMsgType] = useState<string | null>(null);
-  const [lastMsgOrigin, setLastMsgOrigin] = useState<string | null>(null);
-  const isDev = import.meta.env.DEV;
   const normalizedArtifactHtml = useMemo(
     () => normalizeArtifactHtml(artifactHtml, cspTemplate),
     [artifactHtml, cspTemplate]
   );
-  const iframeKey = `viewer-${retryToken}`;
+  const [srcDoc, setSrcDoc] = useState<string>("");
+  const [loadId, setLoadId] = useState<string>("");
+  const [reloadToken, setReloadToken] = useState(0);
+  const [sawIframeLoad, setSawIframeLoad] = useState(false);
+  const [sawReady, setSawReady] = useState(false);
+  const [lastMsgType, setLastMsgType] = useState<string | null>(null);
+  const [lastMsgOrigin, setLastMsgOrigin] = useState<string | null>(null);
+  const isDev = import.meta.env.DEV;
+  const iframeKey = `viewer-${loadId}`;
 
   useEffect(() => {
     if (isDev) {
@@ -162,20 +172,28 @@ export const CalculatorViewer = ({
 
   const handleMessage = useCallback((event: MessageEvent) => {
     const iframeWindow = iframeRef.current?.contentWindow;
-    const eventData = event.data as { type?: unknown; token?: unknown } | null;
-    if (isDev) {
-      console.warn("CalculatorViewer message event", {
-        origin: event.origin,
-        sourceIsExpected: iframeWindow ? event.source === iframeWindow : false,
-        type: typeof eventData?.type === "string" ? eventData.type : null,
-        token: typeof eventData?.token === "string" ? eventData.token : null,
-      });
-    }
+    const eventData = event.data as {
+      type?: unknown;
+      token?: unknown;
+      loadId?: unknown;
+    } | null;
+    const observedLoadId =
+      typeof eventData?.loadId === "string" ? eventData.loadId : null;
+    const observedToken =
+      typeof eventData?.token === "string" ? eventData.token : null;
     if (isDev) {
       setLastMsgType(typeof eventData?.type === "string" ? eventData.type : null);
       setLastMsgOrigin(event.origin || null);
     }
     if (!iframeWindow || event.source !== iframeWindow) {
+      if (isDev) {
+        console.warn("CalculatorViewer message.recv", {
+          loadId: observedLoadId,
+          token: observedToken,
+          accepted: false,
+          reasonIfIgnored: "source-mismatch",
+        });
+      }
       return;
     }
 
@@ -191,41 +209,58 @@ export const CalculatorViewer = ({
     rateRef.current.count += 1;
 
     if (!isHandshakeMessage(event.data)) {
-      setStatus("error");
-      setErrorCode("INVALID_MESSAGE");
+      if (isDev) {
+        console.warn("CalculatorViewer message.recv", {
+          loadId: observedLoadId,
+          token: observedToken,
+          accepted: false,
+          reasonIfIgnored: "invalid-payload",
+        });
+      }
       return;
     }
 
-    const token = event.data.token ?? null;
-    const tokenOk =
-      !handshakeTokenRef.current ||
-      token === null ||
-      token === handshakeTokenRef.current;
-
-    const isReady =
-      event.data.type === "ready" || event.data.type === "PROMPTCALC_READY";
-    const isPong = event.data.type === "PROMPTCALC_PONG";
-
-    if (!tokenOk || (!isReady && !isPong)) {
+    if (event.data.loadId !== loadIdRef.current) {
+      if (isDev) {
+        console.warn("CalculatorViewer message.recv", {
+          loadId: event.data.loadId,
+          token: event.data.token,
+          accepted: false,
+          reasonIfIgnored: "loadId-mismatch",
+        });
+      }
       return;
     }
 
-    if (isReady) {
-      handshakeRef.current.ready = true;
+    if (event.data.token !== handshakeTokenRef.current) {
       if (isDev) {
-        setSawReady(true);
+        console.warn("CalculatorViewer message.recv", {
+          loadId: event.data.loadId,
+          token: event.data.token,
+          accepted: false,
+          reasonIfIgnored: "token-mismatch",
+        });
       }
-    }
-    if (isPong) {
-      handshakeRef.current.pong = true;
-      if (isDev) {
-        setSawPong(true);
-      }
+      return;
     }
 
-    if (timerRef.current) {
+    if (isDev) {
+      console.warn("CalculatorViewer message.recv", {
+        loadId: event.data.loadId,
+        token: event.data.token,
+        accepted: true,
+      });
+    }
+
+    handshakeRef.current.ready = true;
+    if (isDev) {
+      setSawReady(true);
+    }
+
+    if (timerRef.current && watchdogLoadIdRef.current === event.data.loadId) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
+      watchdogLoadIdRef.current = null;
       if (isDev) {
         console.warn("CalculatorViewer watchdog stopped");
       }
@@ -254,11 +289,18 @@ export const CalculatorViewer = ({
       return;
     }
 
+    const nextLoadId = generateHandshakeToken();
+    const nextToken = generateHandshakeToken();
+    loadIdRef.current = nextLoadId;
+    handshakeTokenRef.current = nextToken;
+    setLoadId(nextLoadId);
+
+    const artifactHash = computeArtifactHash(normalizedArtifactHtml);
     if (isDev) {
-      console.warn("CalculatorViewer load start", {
-        calcId,
-        versionId,
-        artifactLength: normalizedArtifactHtml.length,
+      console.warn("CalculatorViewer load.start", {
+        loadId: nextLoadId,
+        artifactHash,
+        len: normalizedArtifactHtml.length,
       });
     }
 
@@ -266,15 +308,19 @@ export const CalculatorViewer = ({
     setErrorCode(null);
     setTraceId(null);
     setSrcDoc(normalizedArtifactHtml);
-    handshakeRef.current = { ready: false, pong: false };
+    if (isDev) {
+      console.warn("CalculatorViewer srcdoc.assigned", {
+        loadId: nextLoadId,
+        len: normalizedArtifactHtml.length,
+      });
+    }
+    handshakeRef.current = { ready: false };
     warningLoggedRef.current = false;
     pingPendingRef.current = true;
-    handshakeTokenRef.current = generateHandshakeToken();
     iframeLoadRef.current = false;
     if (isDev) {
       setSawIframeLoad(false);
       setSawReady(false);
-      setSawPong(false);
       setLastMsgType(null);
       setLastMsgOrigin(null);
     }
@@ -283,12 +329,15 @@ export const CalculatorViewer = ({
       window.clearTimeout(timerRef.current);
     }
 
+    const timeoutLoadId = nextLoadId;
+    watchdogLoadIdRef.current = timeoutLoadId;
     timerRef.current = window.setTimeout(() => {
+      if (loadIdRef.current !== timeoutLoadId) {
+        return;
+      }
       if (!warningLoggedRef.current) {
-        console.warn("CalculatorViewer watchdog timeout", {
-          sawLoad: iframeLoadRef.current,
-          sawReady: handshakeRef.current.ready,
-          sawPong: handshakeRef.current.pong,
+        console.warn("CalculatorViewer watchdog.timeout", {
+          loadId: timeoutLoadId,
         });
         warningLoggedRef.current = true;
       }
@@ -296,7 +345,10 @@ export const CalculatorViewer = ({
       setErrorCode("WATCHDOG_TIMEOUT");
     }, timeoutMs);
     if (isDev) {
-      console.warn("CalculatorViewer watchdog started", { timeoutMs });
+      console.warn("CalculatorViewer watchdog started", {
+        loadId: nextLoadId,
+        timeoutMs,
+      });
     }
 
     return () => {
@@ -310,7 +362,7 @@ export const CalculatorViewer = ({
   }, [
     normalizedArtifactHtml,
     timeoutMs,
-    retryToken,
+    reloadToken,
     calcId,
     versionId,
     isDev,
@@ -321,7 +373,6 @@ export const CalculatorViewer = ({
       return;
     }
 
-    console.warn("CalculatorViewer srcdoc assigned", { length: srcDoc.length });
     const sandboxValue = iframeRef.current?.getAttribute("sandbox");
     if (sandboxValue !== "allow-scripts") {
       console.error("CalculatorViewer sandbox must be allow-scripts only.");
@@ -335,8 +386,9 @@ export const CalculatorViewer = ({
   }, [iframeKey, isDev]);
 
   const handleIframeLoad = useCallback(() => {
+    const currentLoadId = loadIdRef.current;
     if (isDev) {
-      console.warn("CalculatorViewer iframe load event", { iframeKey });
+      console.warn("CalculatorViewer iframe.load", { loadId: currentLoadId });
     }
     iframeLoadRef.current = true;
     if (isDev) {
@@ -354,15 +406,16 @@ export const CalculatorViewer = ({
 
     try {
       if (isDev) {
-        console.warn("CalculatorViewer postMessage PING", {
-          token: handshakeTokenRef.current,
+        console.warn("CalculatorViewer ping.sent", {
+          loadId: currentLoadId,
         });
       }
       iframeWindow.postMessage(
         {
-          type: "PROMPTCALC_PING",
+          type: "PING",
           v: "1",
           ts: Date.now(),
+          loadId: currentLoadId,
           token: handshakeTokenRef.current,
         },
         "*"
@@ -377,7 +430,7 @@ export const CalculatorViewer = ({
       window.clearTimeout(retryRef.current);
     }
     retryRef.current = window.setTimeout(() => {
-      setRetryToken((prev) => prev + 1);
+      setReloadToken((prev) => prev + 1);
     }, 0);
   };
 
@@ -405,9 +458,8 @@ export const CalculatorViewer = ({
         {traceId && <span className="viewer-trace">Trace: {traceId}</span>}
         {isDev && (
           <small className="viewer-debug">
-            Debug: load={String(sawIframeLoad)} ready={String(sawReady)} pong=
-            {String(sawPong)} lastType={lastMsgType ?? "none"} lastOrigin=
-            {lastMsgOrigin ?? "none"}
+            Debug: load={String(sawIframeLoad)} ready={String(sawReady)} lastType=
+            {lastMsgType ?? "none"} lastOrigin={lastMsgOrigin ?? "none"}
           </small>
         )}
       </div>
@@ -419,16 +471,18 @@ export const CalculatorViewer = ({
           </button>
         </div>
       )}
-      <iframe
-        key={iframeKey}
-        ref={iframeRef}
-        sandbox="allow-scripts"
-        referrerPolicy="no-referrer"
-        srcDoc={srcDoc}
-        className="viewer-frame"
-        title="Calculator Viewer"
-        onLoad={handleIframeLoad}
-      />
+      {loadId && (
+        <iframe
+          key={iframeKey}
+          ref={iframeRef}
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
+          srcDoc={srcDoc}
+          className="viewer-frame"
+          title="Calculator Viewer"
+          onLoad={handleIframeLoad}
+        />
+      )}
     </section>
   );
 };

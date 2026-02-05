@@ -36,8 +36,18 @@ Step 5 — End-to-end prototype validation (per README).
 
 ## Open Issues
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
+- Viewer load intermittency due to race; resolved by single-flight loadId + iframe key + message correlation.
 - DISALLOWED_PATTERN refusals when model output includes `new Function` for a standard calculator.
 - OpenAI Responses schema strictness (text.format) causes retries; currently falling back to `json_object`.
+
+## How to debug viewer load pipeline
+Look for the following dev logs in sequence:
+- `CalculatorViewer load.start` (loadId, artifactHash, len)
+- `CalculatorViewer srcdoc.assigned` (loadId, len)
+- `CalculatorViewer iframe.load` (loadId)
+- `CalculatorViewer ping.sent` (loadId)
+- `CalculatorViewer message.recv` (loadId/token + accepted flag)
+- `CalculatorViewer watchdog.timeout` (loadId)
 
 ## Next Tasks (Top 3)
 1. Validate AI scan guardrails against real-world calculator prompts (confirm false positives stay suppressed).
