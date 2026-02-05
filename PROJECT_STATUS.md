@@ -34,6 +34,7 @@ Step 5 — End-to-end prototype validation (per README).
 - AI scan rubric + post-processing guardrails align with the sandbox model; offline warnings, DOM event wiring, inline JS, postMessage, and CSP unsafe-inline are allowed while true violations are refused.
 - Generated artifacts now avoid `<form>` tags and include deterministic safeguards that prevent form submission in sandboxed iframes.
 - Viewer load stability: removed fragile gating refs; ignore non-handshake messages; idempotent ping; optional token strictness.
+- Fixed PromptScanDecision schema (required+additionalProperties) causing OpenAI 400 OPENAI_BAD_REQUEST; generation unblocked.
 
 ## Open Issues
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
