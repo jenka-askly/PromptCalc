@@ -59,7 +59,7 @@ describe("App red-team profile controls", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Dev red-team debug checks")).toBeTruthy();
+      expect(screen.getByText("Debug / red-team")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByLabelText("Red-team profile enabled"));
@@ -80,7 +80,7 @@ describe("App red-team profile controls", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Dev red-team debug checks")).toBeTruthy();
+      expect(screen.getByText("Debug / red-team")).toBeTruthy();
     });
 
     expect((screen.getByLabelText("Red-team profile enabled") as HTMLInputElement).checked).toBe(true);

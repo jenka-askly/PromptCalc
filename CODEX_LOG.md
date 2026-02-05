@@ -259,3 +259,27 @@ Security Risks: None.
 - `python - <<'PY' ...` (remove `apps/web/node_modules/.vite` and `node_modules/.vite` if present)
 - `npm run dev`
 - `npm install`
+
+
+## 2026-02-05 (America/Los_Angeles)
+**Objective**
+- Reduce vertical UI stacking and improve debugging workflow by moving to a workbench-style layout.
+
+**Approach**
+- Reorganized `App.tsx` into a fixed top bar, split left/right workbench panes, and a collapsed bottom history drawer while preserving existing fetch/API and red-team logic paths.
+- Kept existing controls/components and moved them into new layout containers with collapsible sections and output tabs (Output, Logs/errors, Generated HTML in dev).
+- Updated CSS layout primitives to isolate scrolling (left pane, right tab content, bottom drawer) and keep viewer primary.
+
+**Files changed**
+- apps/web/src/App.tsx
+- apps/web/src/index.css
+- apps/web/src/App.test.tsx
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands used to verify**
+- `npm --workspace apps/web test` (fails in this environment: `vitest: not found`)
+- `npm run dev` (fails in this environment: `concurrently: not found`)
+
+**Known follow-ups**
+- Add visual polish and responsive/mobile behavior after structural validation on a fully provisioned dev machine.
