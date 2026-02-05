@@ -6,6 +6,18 @@ Security Risks: None.
 
 # CODEX Log
 
+## 2026-02-05
+**Summary**
+- Removed legacy load gating refs, simplified retry flow, and made iframe load/ping idempotent per load to prevent regressions.
+- Tightened handshake handling to ignore non-handshake messages and wrong tokens without flipping status to error.
+- Updated viewer tests and continuity status notes for the cleanup.
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- Monitor watchdog timeouts to confirm they are the only error path during load failures.
+
 ## 2026-02-04
 **Summary**
 - Stabilized calculator viewer loads with loadId/token single-flight handling, fresh iframes per load, and watchdog/message correlation.
