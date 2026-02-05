@@ -20,6 +20,7 @@ interface HealthResponse {
     identityProvider?: string;
     userId?: string;
   };
+  redTeamCapabilityAvailable?: boolean;
 }
 
 interface SaveCalcResponse {
@@ -58,13 +59,27 @@ interface GenerateRefusalDetail {
 
 type GenerateCalcResponse =
   | {
+      kind: "ok";
       status: "ok";
       calcId: string;
       versionId: string;
       manifest: Record<string, unknown>;
       artifactHtml: string;
+      scanOutcome: "allow" | "deny" | "skipped";
+      overrideUsed: boolean;
     }
-  | { status: "refused"; refusalReason: GenerateRefusalReason };
+  | { kind: "scan_block"; status: "refused"; refusalReason: GenerateRefusalReason }
+  | {
+      kind: "scan_warn";
+      status: "scan_warn";
+      requiresUserProceed: true;
+      scanDecision: {
+        refusalCode: string | null;
+        categories: string[];
+        reason: string;
+      };
+    }
+  | { kind: "scan_skipped"; status: "scan_skipped"; requiresUserProceed: true };
 
 type AuthState =
   | { mode: "unknown" }
@@ -125,6 +140,9 @@ const buildCurrentArtifact = ({
   status,
 });
 
+const RED_TEAM_PHRASE = "I UNDERSTAND THIS MAY BE UNSAFE";
+const RED_TEAM_SESSION_KEY = "promptcalc.redteam.armed";
+
 const formatRefusalDetail = (detail: GenerateRefusalDetail): string => {
   const base =
     detail.message ?? detail.summary ?? detail.evidence ?? "AI scan issue reported.";
@@ -155,12 +173,24 @@ const App = () => {
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [loadingCalcs, setLoadingCalcs] = useState(false);
   const [authState, setAuthState] = useState<AuthState>({ mode: "unknown" });
+  const [redTeamCapabilityAvailable, setRedTeamCapabilityAvailable] = useState(false);
   const [generatePrompt, setGeneratePrompt] = useState(
     "Simple tip calculator with bill + tip% + total."
   );
   const [generateStatus, setGenerateStatus] = useState<string | null>(null);
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [redTeamPhrase, setRedTeamPhrase] = useState("");
+  const [redTeamArmed, setRedTeamArmed] = useState(() =>
+    window.sessionStorage.getItem(RED_TEAM_SESSION_KEY) === "1"
+  );
+  const [redTeamError, setRedTeamError] = useState<string | null>(null);
+  const [scanBanner, setScanBanner] = useState<"warn" | "off" | null>(null);
+  const [pendingInterstitial, setPendingInterstitial] = useState<
+    | { kind: "scan_warn"; refusalCode: string | null; categories: string[]; reason: string }
+    | { kind: "scan_skipped" }
+    | null
+  >(null);
   const previousArtifactRef = useRef<CurrentArtifact | null>(null);
   const viewerKey = `${currentArtifact.artifactHash}`;
   const manifestExecutionModel =
@@ -231,6 +261,7 @@ const App = () => {
   }, [currentArtifact, isDev]);
 
   const resolveAuthState = (health: HealthResponse) => {
+    setRedTeamCapabilityAvailable(health.redTeamCapabilityAvailable === true);
     if (health.auth?.identityProvider === "dev") {
       setAuthState({
         mode: "dev",
@@ -338,7 +369,7 @@ const App = () => {
     }
   };
 
-  const generateCalc = async () => {
+  const generateCalc = async (proceedOverride = false) => {
     setGenerateStatus(null);
     setGenerateRefusal(null);
     setCalcsError(null);
@@ -353,6 +384,8 @@ const App = () => {
           prompt: generatePrompt,
           baseCalcId: currentArtifact.calcId ?? undefined,
           baseVersionId: currentArtifact.versionId ?? undefined,
+          redTeamArmed,
+          proceedOverride,
         }),
       });
 
@@ -363,9 +396,26 @@ const App = () => {
         );
       }
 
-      if (data.status === "refused") {
+      if (data.kind === "scan_block") {
         setGenerateRefusal(data.refusalReason);
         setGenerateStatus("Generation refused.");
+        return;
+      }
+
+      if (data.kind === "scan_warn") {
+        setPendingInterstitial({
+          kind: "scan_warn",
+          refusalCode: data.scanDecision.refusalCode,
+          categories: data.scanDecision.categories,
+          reason: data.scanDecision.reason,
+        });
+        setGenerateStatus("Scan warning requires confirmation.");
+        return;
+      }
+
+      if (data.kind === "scan_skipped") {
+        setPendingInterstitial({ kind: "scan_skipped" });
+        setGenerateStatus("Scan is disabled in red-team mode. Confirmation required.");
         return;
       }
 
@@ -378,6 +428,14 @@ const App = () => {
           versionId: data.versionId,
         })
       );
+      if (data.scanOutcome === "deny" && data.overrideUsed) {
+        setScanBanner("warn");
+      } else if (data.scanOutcome === "skipped") {
+        setScanBanner("off");
+      } else {
+        setScanBanner(null);
+      }
+      setPendingInterstitial(null);
       setGenerateStatus(`Generated ${data.calcId} v${data.versionId}`);
       await loadCalcs();
     } catch (err) {
@@ -421,6 +479,25 @@ const App = () => {
 
   const handleSignOut = () => {
     window.location.assign("/.auth/logout?post_logout_redirect_uri=/");
+  };
+
+  const armRedTeam = () => {
+    if (redTeamPhrase !== RED_TEAM_PHRASE) {
+      setRedTeamError("Phrase must match exactly to arm red-team mode.");
+      return;
+    }
+    window.sessionStorage.setItem(RED_TEAM_SESSION_KEY, "1");
+    setRedTeamArmed(true);
+    setRedTeamPhrase("");
+    setRedTeamError(null);
+    setGenerateStatus("Red-team override armed for this browser session.");
+  };
+
+  const disarmRedTeam = () => {
+    window.sessionStorage.removeItem(RED_TEAM_SESSION_KEY);
+    setRedTeamArmed(false);
+    setPendingInterstitial(null);
+    setRedTeamPhrase("");
   };
 
   return (
@@ -486,6 +563,30 @@ const App = () => {
               </div>
             </div>
           )}
+          {redTeamCapabilityAvailable && (
+            <div className="redteam-panel">
+              <strong>Dev red-team controls</strong>
+              <p>
+                Warning: this mode can bypass scan blocking in development. Type the exact phrase to arm for this session.
+              </p>
+              <input
+                type="text"
+                value={redTeamPhrase}
+                onChange={(event) => setRedTeamPhrase(event.target.value)}
+                placeholder={RED_TEAM_PHRASE}
+              />
+              <div className="actions">
+                <button type="button" onClick={armRedTeam} disabled={redTeamArmed}>
+                  Arm red-team mode
+                </button>
+                <button type="button" onClick={disarmRedTeam} className="secondary">
+                  Disarm
+                </button>
+                <span className="status">{redTeamArmed ? "Armed" : "Not armed"}</span>
+              </div>
+              {redTeamError && <div className="error">{redTeamError}</div>}
+            </div>
+          )}
         </div>
         <div className="toggle">
           <label>
@@ -533,6 +634,8 @@ const App = () => {
           </button>
           {saveStatus && <span className="status">{saveStatus}</span>}
         </div>
+        {scanBanner === "warn" && <div className="scan-banner warn">You proceeded despite scan warning.</div>}
+        {scanBanner === "off" && <div className="scan-banner off">Scan disabled (red team mode).</div>}
         <CalculatorViewer
           key={viewerKey}
           artifactHtml={currentArtifact.artifactHtml}
@@ -593,6 +696,44 @@ const App = () => {
           </p>
         )}
       </section>
+      {pendingInterstitial && (
+        <div className="interstitial-overlay" role="dialog" aria-modal="true">
+          <div className="interstitial">
+            <h3>
+              {pendingInterstitial.kind === "scan_warn"
+                ? "AI Safety Scan Warning"
+                : "AI Scan Disabled"}
+            </h3>
+            {pendingInterstitial.kind === "scan_warn" ? (
+              <>
+                <p>{pendingInterstitial.reason}</p>
+                <p>
+                  Refusal code: {pendingInterstitial.refusalCode ?? "none"}
+                  {pendingInterstitial.categories.length > 0
+                    ? ` | Categories: ${pendingInterstitial.categories.join(", ")}`
+                    : ""}
+                </p>
+              </>
+            ) : (
+              <p>Prompt scanning is disabled in red-team mode for this request.</p>
+            )}
+            <div className="actions">
+              <button
+                type="button"
+                className="secondary"
+                autoFocus
+                onClick={() => setPendingInterstitial(null)}
+              >
+                Cancel
+              </button>
+              <button type="button" onClick={() => void generateCalc(true)}>
+                Proceed anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="panel">
         <h2>API status</h2>
         <button type="button" onClick={checkHealth}>

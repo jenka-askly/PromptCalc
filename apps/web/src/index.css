@@ -203,3 +203,62 @@ dl div {
     gap: 4px;
   }
 }
+
+.redteam-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+}
+
+.redteam-panel input {
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #f59e0b;
+}
+
+.scan-banner {
+  padding: 10px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.scan-banner.warn {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+}
+
+.scan-banner.off {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+.secondary {
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+}
+
+.interstitial-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.interstitial {
+  width: min(520px, 100%);
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}

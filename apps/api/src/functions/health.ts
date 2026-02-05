@@ -8,12 +8,14 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/fu
 import { logEvent } from "@promptcalc/logger";
 import { getUserContext } from "../auth";
 import { getTraceId } from "../trace";
+import { resolveScanPolicyConfig } from "../generation/scanPolicy";
 
 const buildId = process.env.BUILD_ID || "dev";
 
 const toResponse = (
   traceId: string,
-  authContext: { isAuthenticated: boolean; identityProvider?: string; userId?: string }
+  authContext: { isAuthenticated: boolean; identityProvider?: string; userId?: string },
+  redTeamCapabilityAvailable: boolean
 ): HttpResponseInit => ({
   jsonBody: {
     ok: true,
@@ -21,6 +23,7 @@ const toResponse = (
     build: buildId,
     traceId,
     auth: authContext,
+    redTeamCapabilityAvailable,
   },
   headers: {
     "content-type": "application/json",
@@ -53,7 +56,7 @@ export const health = async (
     isAuthenticated,
     identityProvider,
     ...(isAuthenticated || identityProvider === "dev" ? { userId } : {}),
-  });
+  }, resolveScanPolicyConfig().redTeamCapabilityAvailable);
   const durationMs = Date.now() - startedAt;
 
   logEvent({

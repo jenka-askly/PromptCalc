@@ -18,34 +18,88 @@ export type RefusalReason = {
 };
 
 export type GenerateOkResponse = {
+  kind: "ok";
   status: "ok";
   calcId: string;
   versionId: string;
   manifest: Record<string, unknown>;
   artifactHtml: string;
+  overrideUsed: boolean;
+  scanOutcome: "allow" | "deny" | "skipped";
 };
 
-export type GenerateRefusedResponse = {
+export type GenerateScanBlockResponse = {
+  kind: "scan_block";
   status: "refused";
   refusalReason: RefusalReason;
 };
 
-export type GenerateResponse = GenerateOkResponse | GenerateRefusedResponse;
+export type GenerateScanWarnResponse = {
+  kind: "scan_warn";
+  status: "scan_warn";
+  requiresUserProceed: true;
+  scanDecision: {
+    refusalCode: string | null;
+    categories: string[];
+    reason: string;
+  };
+};
+
+export type GenerateScanSkippedResponse = {
+  kind: "scan_skipped";
+  status: "scan_skipped";
+  requiresUserProceed: true;
+};
+
+export type GenerateResponse =
+  | GenerateOkResponse
+  | GenerateScanBlockResponse
+  | GenerateScanWarnResponse
+  | GenerateScanSkippedResponse;
 
 export const buildGenerateOkResponse = (
   calcId: string,
   versionId: string,
   manifest: Record<string, unknown>,
-  artifactHtml: string
+  artifactHtml: string,
+  scanOutcome: "allow" | "deny" | "skipped",
+  overrideUsed: boolean
 ): GenerateOkResponse => ({
+  kind: "ok",
   status: "ok",
   calcId,
   versionId,
   manifest,
   artifactHtml,
+  scanOutcome,
+  overrideUsed,
 });
 
-export const buildGenerateRefusedResponse = (reason: RefusalReason): GenerateRefusedResponse => ({
+export const buildGenerateScanBlockResponse = (
+  reason: RefusalReason
+): GenerateScanBlockResponse => ({
+  kind: "scan_block",
   status: "refused",
   refusalReason: reason,
+});
+
+export const buildGenerateScanWarnResponse = (params: {
+  refusalCode: string | null;
+  categories: string[];
+  reason: string;
+}): GenerateScanWarnResponse => ({
+  kind: "scan_warn",
+  status: "scan_warn",
+  requiresUserProceed: true,
+  scanDecision: {
+    refusalCode: params.refusalCode,
+    categories: params.categories,
+    reason: params.reason,
+  },
+});
+
+export const buildGenerateScanSkippedResponse = (): GenerateScanSkippedResponse => ({
+  kind: "scan_skipped",
+  status: "scan_skipped",
+  requiresUserProceed: true,
 });
