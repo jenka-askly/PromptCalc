@@ -980,7 +980,8 @@ const generateCalc = async (
     const scanPolicyConfig = resolveScanPolicyConfig();
     const configuredScanPolicyMode = scanPolicyConfig.mode;
     const redTeamArmed = scanPolicyConfig.redTeamCapabilityAvailable && body.redTeamArmed === true;
-    const proceedOverride = body.proceedOverride === true;
+    const proceedOverride =
+      scanPolicyConfig.redTeamCapabilityAvailable && body.proceedOverride === true;
     const scanPolicyMode = resolveRuntimeScanPolicyMode(configuredScanPolicyMode, redTeamArmed);
     let scanOutcome: "allow" | "deny" | "error" | "skipped" = "allow";
     let overrideUsed = false;
