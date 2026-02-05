@@ -84,3 +84,4 @@ Look for the following dev logs in sequence:
 - When `PROMPTCALC_REDKIT!=1`, server forces safe effective profile defaults (`scanMode=enforce`, strict/prompt verification/schema/html/post-process on, dumping off) and debug panel remains hidden.
 - Dev debug toggles now persist in-tab via `sessionStorage` and include a Reset action to clear persisted profile state.
 - Full collateral dumps now use deterministic per-trace folders at `.promptcalc_artifacts/<traceId>/` and UI surfaces `Trace ID` plus `Dump folder` directly in result/error status.
+- Updated `shared/types` TypeScript build target to ESM (`module: ES2022`, `moduleResolution: Bundler`) so Vite can consume named exports from `@promptcalc/types` without CommonJS interop issues.
