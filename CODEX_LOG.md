@@ -106,3 +106,29 @@ Security Risks: None.
 
 **Notes**
 - Verify AI scan issue summaries appear in `artifact.aiScan.failed` logs when generation is refused.
+
+## 2026-02-05
+**Summary**
+- Added dev-only red-team prompt scan policy resolution (`enforce`/`warn`/`off`) with PROMPTCALC_REDKIT + PROMPTCALC_SCAN_OFF gating and runtime arming checks.
+- Implemented scan warning/scan skipped structured responses, per-request proceed override flow, and metadata-only scan policy logging.
+- Added web interstitial + red-team typed phrase controls (session-scoped arming) and post-proceed scan banners.
+- Added scan-policy/pipeline unit tests for enforce/warn/off behavior and response contract updates.
+
+**Files Touched**
+- apps/api/src/functions/calcs.ts
+- apps/api/src/functions/health.ts
+- apps/api/src/generation/response.ts
+- apps/api/src/generation/scanPolicy.ts
+- apps/api/src/generation/scanOverrideFlow.ts
+- apps/api/src/generation/pipeline.ts
+- apps/api/test/responseContract.test.ts
+- apps/api/test/redTeamPipeline.test.ts
+- apps/api/test/scanPolicyConfig.test.ts
+- apps/web/src/App.tsx
+- apps/web/src/index.css
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**How to run tests**
+- `npm --workspace apps/api test`
+- `npm --workspace apps/web run build`

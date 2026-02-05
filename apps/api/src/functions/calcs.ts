@@ -17,6 +17,7 @@ import type { RefusalCode } from "@promptcalc/types";
 
 import { getUserContext } from "../auth";
 import { getGenerationConfig } from "../generation/config";
+import { resolveRuntimeScanPolicyMode, resolveScanPolicyConfig } from "../generation/scanPolicy";
 import {
   getExecutionModelRuleText,
   selectExecutionModelFromPrompt,
@@ -34,7 +35,9 @@ import {
 } from "../generation/aiScan";
 import {
   buildGenerateOkResponse,
-  buildGenerateRefusedResponse,
+  buildGenerateScanBlockResponse,
+  buildGenerateScanSkippedResponse,
+  buildGenerateScanWarnResponse,
   type RefusalReason,
 } from "../generation/response";
 import { ensureFormSafety } from "../generation/artifactPostprocess";
@@ -63,6 +66,8 @@ interface GenerateCalcRequest {
   prompt: string;
   baseCalcId?: string;
   baseVersionId?: string;
+  redTeamArmed?: boolean;
+  proceedOverride?: boolean;
 }
 
 interface PromptScanDecision {
@@ -145,7 +150,7 @@ const buildOpenAIBadRequestRefusal = (): RefusalReason =>
 
 const buildOpenAIBadRequestResponse = (traceId: string, status: number): HttpResponseInit =>
   jsonResponse(traceId, status, {
-    ...buildGenerateRefusedResponse(buildOpenAIBadRequestRefusal()),
+    ...buildGenerateScanBlockResponse(buildOpenAIBadRequestRefusal()),
     traceId,
   });
 
@@ -387,7 +392,7 @@ const buildRefusalResponse = (
   status: number,
   reason: RefusalReason
 ): HttpResponseInit =>
-  jsonResponse(traceId, status, buildGenerateRefusedResponse(reason));
+  jsonResponse(traceId, status, buildGenerateScanBlockResponse(reason));
 
 const getManifestValidationIssue = (manifest: Record<string, unknown>): string | null => {
   const specVersion = manifest.specVersion;
@@ -972,89 +977,156 @@ const generateCalc = async (
       maxTokens: config.maxTokens,
     };
 
-    let promptDecision: PromptScanDecision;
-    try {
-      const promptScanSystem = [
-        "Return JSON only. No markdown. No prose.",
-        "You are a strict policy classifier for PromptCalc generation prompts.",
-        "Disallow any intent that requests:",
-        "- networking, URL fetching, scraping, or external data sources",
-        "- external dependencies or CDN scripts",
-        "- credential capture (login pages, password inputs)",
-        "- analytics, tracking, or user fingerprinting",
-        "- attempts to escape the sandboxed iframe (top navigation, popups)",
-        "- eval/dynamic code generation requests",
-        "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
-        "Return a JSON object that conforms exactly to the schema.",
-        "If disallowed, set allowed=false and set refusalCode to the best matching policy code.",
-      ].join("\\n");
+    const scanPolicyConfig = resolveScanPolicyConfig();
+    const configuredScanPolicyMode = scanPolicyConfig.mode;
+    const redTeamArmed = scanPolicyConfig.redTeamCapabilityAvailable && body.redTeamArmed === true;
+    const proceedOverride = body.proceedOverride === true;
+    const scanPolicyMode = resolveRuntimeScanPolicyMode(configuredScanPolicyMode, redTeamArmed);
+    let scanOutcome: "allow" | "deny" | "error" | "skipped" = "allow";
+    let overrideUsed = false;
 
-      const promptScanUser = `Prompt:\\n${prompt}`;
+    logEvent({
+      level: "info",
+      op,
+      traceId,
+      event: "scan.policy",
+      scan_policy_mode: scanPolicyMode,
+      override_armed: redTeamArmed,
+      override_used: false,
+    });
 
-      const promptScanResult = await callOpenAIResponses<PromptScanDecision>(
-        traceId,
-        openAIConfig,
-        {
-          input: [
-            { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
-            { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
-          ],
-          max_output_tokens: 350,
-          text: {
-            format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
-          },
-        },
-        "openai.prompt.scan",
-        { maxAttempts: 2, jsonSchemaFallback: false, devLogOutputExtraction: isDevUser }
-      );
-
-      promptDecision = promptScanResult.parsed;
-    } catch (error) {
-      if (error instanceof OpenAIBadRequestError) {
-        return buildOpenAIBadRequestResponse(traceId, 502);
-      }
-      if (error instanceof OpenAIParseError) {
+    let promptDecision: PromptScanDecision | null = null;
+    if (configuredScanPolicyMode === "off" && redTeamArmed) {
+      scanOutcome = "skipped";
+      if (!proceedOverride) {
         logEvent({
           level: "warn",
           op,
           traceId,
-          event: "prompt.scan.parse_failed",
-          message: error.message,
+          event: "scan.interstitial",
+          scan_policy_mode: scanPolicyMode,
+          scan_outcome: "skipped",
+          override_armed: true,
+          override_used: false,
         });
-        return buildOpenAIParseFailedResponse(traceId);
+        return jsonResponse(traceId, 200, buildGenerateScanSkippedResponse());
       }
-      const reason = buildRefusalReason(
-        "OPENAI_ERROR",
-        "Prompt classification failed.",
-        "Try a simpler offline calculator prompt."
-      );
+      overrideUsed = true;
+    } else {
+      try {
+        const promptScanSystem = [
+          "Return JSON only. No markdown. No prose.",
+          "You are a strict policy classifier for PromptCalc generation prompts.",
+          "Disallow any intent that requests:",
+          "- networking, URL fetching, scraping, or external data sources",
+          "- external dependencies or CDN scripts",
+          "- credential capture (login pages, password inputs)",
+          "- analytics, tracking, or user fingerprinting",
+          "- attempts to escape the sandboxed iframe (top navigation, popups)",
+          "- eval/dynamic code generation requests",
+          "Return ONLY valid JSON. No markdown. No code fences. No commentary.",
+          "Return a JSON object that conforms exactly to the schema.",
+          "If disallowed, set allowed=false and set refusalCode to the best matching policy code.",
+        ].join("\n");
+
+        const promptScanUser = `Prompt:\n${prompt}`;
+
+        const promptScanResult = await callOpenAIResponses<PromptScanDecision>(
+          traceId,
+          openAIConfig,
+          {
+            input: [
+              { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
+              { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
+            ],
+            max_output_tokens: 350,
+            text: {
+              format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
+            },
+          },
+          "openai.prompt.scan",
+          { maxAttempts: 2, jsonSchemaFallback: false, devLogOutputExtraction: isDevUser }
+        );
+
+        promptDecision = promptScanResult.parsed;
+      } catch (error) {
+        scanOutcome = "error";
+        if (error instanceof OpenAIBadRequestError) {
+          return buildOpenAIBadRequestResponse(traceId, 502);
+        }
+        if (error instanceof OpenAIParseError) {
+          logEvent({
+            level: "warn",
+            op,
+            traceId,
+            event: "prompt.scan.parse_failed",
+            message: error.message,
+            scan_policy_mode: scanPolicyMode,
+            scan_outcome: "error",
+            override_armed: redTeamArmed,
+            override_used: false,
+          });
+          return buildOpenAIParseFailedResponse(traceId);
+        }
+        const reason = buildRefusalReason(
+          "OPENAI_ERROR",
+          "Prompt classification failed.",
+          "Try a simpler offline calculator prompt."
+        );
+        logEvent({
+          level: "error",
+          op,
+          traceId,
+          event: "prompt.scan.failed",
+          message: error instanceof Error ? error.message : "unknown error",
+          scan_policy_mode: scanPolicyMode,
+          scan_outcome: "error",
+          override_armed: redTeamArmed,
+          override_used: false,
+        });
+        return buildRefusalResponse(traceId, 502, reason);
+      }
+
+      scanOutcome = promptDecision?.allowed ? "allow" : "deny";
+      const refusalCategories = promptDecision?.refusalCode ? [promptDecision.refusalCode] : [];
       logEvent({
-        level: "error",
+        level: "info",
         op,
         traceId,
-        event: "prompt.scan.failed",
-        message: error instanceof Error ? error.message : "unknown error",
+        event: "prompt.scan.result",
+        allowed: promptDecision?.allowed,
+        refusalCode: promptDecision?.refusalCode,
+        categories: refusalCategories,
+        scan_policy_mode: scanPolicyMode,
+        scan_outcome: scanOutcome,
+        override_armed: redTeamArmed,
+        override_used: false,
       });
-      return buildRefusalResponse(traceId, 502, reason);
+
+      if (promptDecision && !promptDecision.allowed) {
+        if (scanPolicyMode === "warn" && redTeamArmed) {
+          if (!proceedOverride) {
+            return jsonResponse(
+              traceId,
+              200,
+              buildGenerateScanWarnResponse({
+                refusalCode: promptDecision.refusalCode,
+                categories: refusalCategories,
+                reason: promptDecision.reason,
+              })
+            );
+          }
+          overrideUsed = true;
+        } else {
+          const reason = buildRefusalReason(
+            promptDecision.refusalCode || "DISALLOWED_NETWORK",
+            promptDecision.reason,
+            promptDecision.safeAlternative
+          );
+          return buildRefusalResponse(traceId, 200, reason);
+        }
+      }
     }
-
-  logEvent({
-    level: "info",
-    op,
-    traceId,
-    event: "prompt.scan.result",
-    allowed: promptDecision.allowed,
-    refusalCode: promptDecision.refusalCode,
-  });
-
-  if (!promptDecision.allowed) {
-    const reason = buildRefusalReason(
-      promptDecision.refusalCode || "DISALLOWED_NETWORK",
-      promptDecision.reason,
-      promptDecision.safeAlternative
-    );
-    return buildRefusalResponse(traceId, 200, reason);
-  }
 
   const expectedExecutionModel = selectExecutionModelFromPrompt(prompt);
   const generationSystem = [
@@ -1686,6 +1758,10 @@ const generateCalc = async (
       artifactBytes,
       calcId,
       versionId,
+      scan_policy_mode: scanPolicyMode,
+      scan_outcome: scanOutcome,
+      override_armed: redTeamArmed,
+      override_used: overrideUsed,
     });
 
     context.log(`Generated calculator ${calcId} version ${versionId}.`);
@@ -1693,7 +1769,7 @@ const generateCalc = async (
     return jsonResponse(
       traceId,
       200,
-      buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml)
+      buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed)
     );
   } catch (error) {
     const durationMs = Date.now() - startedAt;
