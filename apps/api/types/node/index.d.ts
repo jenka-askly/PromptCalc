@@ -32,8 +32,12 @@ export function createHash(algorithm: string): {
 
 declare module "fs/promises" {
   export function readFile(path: string | URL, encoding: string): Promise<string>;
+  export function writeFile(path: string | URL, data: string, encoding?: string): Promise<void>;
+  export function mkdir(path: string | URL, options?: { recursive?: boolean }): Promise<void>;
+  export function appendFile(path: string | URL, data: string, encoding?: string): Promise<void>;
 }
 
 declare module "path" {
   export function resolve(...paths: string[]): string;
+  export function join(...paths: string[]): string;
 }

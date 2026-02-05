@@ -65,3 +65,8 @@ Look for the following dev logs in sequence:
 
 ## Process
 - After every CODEX merge: update PROJECT_STATUS.md and append to CODEX_LOG.md.
+
+## RED TEAM DEBUG DUMPS (DEV ONLY)
+- When `PROMPTCALC_REDKIT=1`, PromptCalc now writes raw debugging artifacts (including prompt text, scan/generation requests, raw model responses, generated HTML, and error stacks) to local `.promptcalc_artifacts/` for fast investigation.
+- Output paths are logged as `[redteam_dump] traceId=<id> files=<path1>;<path2>;...` and indexed in `.promptcalc_artifacts/index.log`.
+- Never ship this behavior; remove or disable red-team dump output before deployment.

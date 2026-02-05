@@ -11,12 +11,14 @@ export type ScanPolicyConfig = {
   redTeamCapabilityAvailable: boolean;
 };
 
+export const isRedTeamEnabled = (): boolean => process.env.PROMPTCALC_REDKIT === "1";
+
 const isEnabledFlag = (value: string | undefined): boolean => value === "1";
 
 export const resolveScanPolicyConfig = (
   env: NodeJS.ProcessEnv = process.env
 ): ScanPolicyConfig => {
-  const redTeamCapabilityAvailable = isEnabledFlag(env.PROMPTCALC_REDKIT);
+  const redTeamCapabilityAvailable = env === process.env ? isRedTeamEnabled() : isEnabledFlag(env.PROMPTCALC_REDKIT);
 
   if (!redTeamCapabilityAvailable) {
     return {

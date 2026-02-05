@@ -18,6 +18,7 @@ import type { RefusalCode } from "@promptcalc/types";
 import { getUserContext } from "../auth";
 import { getGenerationConfig } from "../generation/config";
 import { resolveRuntimeScanPolicyMode, resolveScanPolicyConfig } from "../generation/scanPolicy";
+import { dumpRedTeamArtifacts } from "../generation/dumpRedTeamArtifacts";
 import {
   getExecutionModelRuleText,
   selectExecutionModelFromPrompt,
@@ -45,6 +46,7 @@ import {
   callOpenAIResponses,
   OpenAIBadRequestError,
   OpenAIParseError,
+  type OpenAIRequest,
   type OpenAITextFormat,
 } from "../openai/client";
 import { getPromptCalcPolicy } from "../policy/policy";
@@ -893,10 +895,20 @@ const generateCalc = async (
   const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
   const isDevUser = identityProvider === "dev";
   const userId = normalizeId(requestUserId);
+  let promptForDump = "";
+  let modelForDump = "unknown";
+  let scanPolicyModeForDump: "enforce" | "warn" | "off" = "enforce";
+  let redTeamArmedForDump = false;
+  let overrideUsedForDump = false;
+  let lastScanRequest: unknown;
+  let lastScanResponseRaw: unknown;
+  let lastGenRequest: unknown;
+  let lastGenResponseRaw: unknown;
 
   try {
     const body = await parseGenerateRequestBody(req);
     const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+    promptForDump = prompt;
 
     logEvent({
       level: "info",
@@ -943,6 +955,7 @@ const generateCalc = async (
     }
 
     const config = await getGenerationConfig();
+    modelForDump = config.model;
     const gateReason = resolveGenerationGate(config);
     if (gateReason) {
       logEvent({
@@ -983,8 +996,39 @@ const generateCalc = async (
     const proceedOverride =
       scanPolicyConfig.redTeamCapabilityAvailable && body.proceedOverride === true;
     const scanPolicyMode = resolveRuntimeScanPolicyMode(configuredScanPolicyMode, redTeamArmed);
+    scanPolicyModeForDump = scanPolicyMode;
+    redTeamArmedForDump = redTeamArmed;
     let scanOutcome: "allow" | "deny" | "error" | "skipped" = "allow";
     let overrideUsed = false;
+
+    const dumpArtifacts = async (params: {
+      stage: "scan" | "generate" | "viewer" | "error";
+      scanRequest?: unknown;
+      scanResponseRaw?: unknown;
+      genRequest?: unknown;
+      genResponseRaw?: unknown;
+      html?: string;
+      error?: { message: string; stack?: string; code?: string; type?: string };
+    }): Promise<void> => {
+      await dumpRedTeamArtifacts({
+        traceId,
+        stage: params.stage,
+        prompt,
+        scanRequest: params.scanRequest,
+        scanResponseRaw: params.scanResponseRaw,
+        genRequest: params.genRequest,
+        genResponseRaw: params.genResponseRaw,
+        html: params.html,
+        error: params.error,
+        meta: {
+          ts: new Date().toISOString(),
+          model: config.model,
+          scanPolicyMode: scanPolicyMode,
+          overrideArmed: redTeamArmed,
+          overrideUsed: overrideUsedForDump,
+        },
+      });
+    };
 
     logEvent({
       level: "info",
@@ -1013,6 +1057,7 @@ const generateCalc = async (
         return jsonResponse(traceId, 200, buildGenerateScanSkippedResponse());
       }
       overrideUsed = true;
+      overrideUsedForDump = true;
     } else {
       try {
         const promptScanSystem = [
@@ -1032,27 +1077,43 @@ const generateCalc = async (
 
         const promptScanUser = `Prompt:\n${prompt}`;
 
+        const scanRequestPayload: OpenAIRequest = {
+          input: [
+            { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
+            { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
+          ],
+          max_output_tokens: 350,
+          text: {
+            format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
+          },
+        };
+        lastScanRequest = scanRequestPayload;
+        await dumpArtifacts({ stage: "scan", scanRequest: scanRequestPayload });
+
         const promptScanResult = await callOpenAIResponses<PromptScanDecision>(
           traceId,
           openAIConfig,
-          {
-            input: [
-              { role: "system", content: [{ type: "input_text", text: promptScanSystem }] },
-              { role: "user", content: [{ type: "input_text", text: promptScanUser }] },
-            ],
-            max_output_tokens: 350,
-            text: {
-              format: buildJsonSchemaResponseFormat("PromptScanDecision", promptScanSchema),
-            },
-          },
+          scanRequestPayload,
           "openai.prompt.scan",
           { maxAttempts: 2, jsonSchemaFallback: false, devLogOutputExtraction: isDevUser }
         );
 
+        lastScanResponseRaw = promptScanResult.raw;
+        await dumpArtifacts({ stage: "scan", scanResponseRaw: promptScanResult.raw });
         promptDecision = promptScanResult.parsed;
       } catch (error) {
         scanOutcome = "error";
         if (error instanceof OpenAIBadRequestError) {
+          await dumpArtifacts({
+            stage: "error",
+            scanRequest: lastScanRequest,
+            scanResponseRaw: lastScanResponseRaw,
+            error: {
+              message: error.message,
+              stack: error.stack,
+              type: error.name,
+            },
+          });
           return buildOpenAIBadRequestResponse(traceId, 502);
         }
         if (error instanceof OpenAIParseError) {
@@ -1066,6 +1127,16 @@ const generateCalc = async (
             scan_outcome: "error",
             override_armed: redTeamArmed,
             override_used: false,
+          });
+          await dumpArtifacts({
+            stage: "error",
+            scanRequest: lastScanRequest,
+            scanResponseRaw: lastScanResponseRaw,
+            error: {
+              message: error.message,
+              stack: error.stack,
+              type: error.name,
+            },
           });
           return buildOpenAIParseFailedResponse(traceId);
         }
@@ -1084,6 +1155,16 @@ const generateCalc = async (
           scan_outcome: "error",
           override_armed: redTeamArmed,
           override_used: false,
+        });
+        await dumpArtifacts({
+          stage: "error",
+          scanRequest: lastScanRequest,
+          scanResponseRaw: lastScanResponseRaw,
+          error: {
+            message: error instanceof Error ? error.message : "unknown error",
+            stack: error instanceof Error ? error.stack : undefined,
+            type: error instanceof Error ? error.name : typeof error,
+          },
         });
         return buildRefusalResponse(traceId, 502, reason);
       }
@@ -1118,6 +1199,7 @@ const generateCalc = async (
             );
           }
           overrideUsed = true;
+          overrideUsedForDump = true;
         } else {
           const reason = buildRefusalReason(
             promptDecision.refusalCode || "DISALLOWED_NETWORK",
@@ -1214,45 +1296,72 @@ const generateCalc = async (
     opName: string
   ): Promise<{ result?: ArtifactGenerationOutput; response?: HttpResponseInit }> => {
     let generationResult: ArtifactGenerationOutput | null = null;
+
+    const dumpGenerationError = async (error: unknown): Promise<void> => {
+      await dumpArtifacts({
+        stage: "error",
+        genRequest: lastGenRequest,
+        genResponseRaw: lastGenResponseRaw,
+        error: {
+          message: error instanceof Error ? error.message : "unknown error",
+          stack: error instanceof Error ? error.stack : undefined,
+          type: error instanceof Error ? error.name : typeof error,
+        },
+      });
+    };
+
     try {
+      const generationRequestPayload: OpenAIRequest = {
+        input: [
+          { role: "system", content: [{ type: "input_text", text: generationSystem }] },
+          { role: "user", content: [{ type: "input_text", text: userText }] },
+        ],
+        text: {
+          format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+        },
+      };
+      lastGenRequest = generationRequestPayload;
+      await dumpArtifacts({ stage: "generate", genRequest: generationRequestPayload });
+
       const generationResponse = await callOpenAIResponses<ArtifactGenerationOutput>(
         traceId,
         openAIConfig,
-        {
-          input: [
-            { role: "system", content: [{ type: "input_text", text: generationSystem }] },
-            { role: "user", content: [{ type: "input_text", text: userText }] },
-          ],
-          text: {
-            format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
-          },
-        },
+        generationRequestPayload,
         opName,
         { maxAttempts: 2, devLogOutputExtraction: isDevUser }
       );
 
       generationResult = generationResponse.parsed;
+      lastGenResponseRaw = generationResponse.raw;
+      await dumpArtifacts({ stage: "generate", genResponseRaw: generationResponse.raw });
     } catch (error) {
       if (error instanceof OpenAIParseError) {
         try {
+          const repairRequestPayload: OpenAIRequest = {
+            input: [
+              { role: "system", content: [{ type: "input_text", text: generationSystem }] },
+              { role: "user", content: [{ type: "input_text", text: repairText }] },
+            ],
+            text: {
+              format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
+            },
+          };
+          lastGenRequest = repairRequestPayload;
+          await dumpArtifacts({ stage: "generate", genRequest: repairRequestPayload });
+
           const repairResponse = await callOpenAIResponses<ArtifactGenerationOutput>(
             traceId,
             openAIConfig,
-            {
-              input: [
-                { role: "system", content: [{ type: "input_text", text: generationSystem }] },
-                { role: "user", content: [{ type: "input_text", text: repairText }] },
-              ],
-              text: {
-                format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema),
-              },
-            },
+            repairRequestPayload,
             `${opName}.repair`,
             { maxAttempts: 1, devLogOutputExtraction: isDevUser }
           );
           generationResult = repairResponse.parsed;
+          lastGenResponseRaw = repairResponse.raw;
+          await dumpArtifacts({ stage: "generate", genResponseRaw: repairResponse.raw });
         } catch (repairError) {
           if (repairError instanceof OpenAIBadRequestError) {
+            await dumpGenerationError(repairError);
             return { response: buildOpenAIBadRequestResponse(traceId, 502) };
           }
           if (repairError instanceof OpenAIParseError) {
@@ -1263,6 +1372,7 @@ const generateCalc = async (
               event: "artifact.generate.parse_failed",
               message: repairError.message,
             });
+            await dumpGenerationError(repairError);
             return { response: buildOpenAIParseFailedResponse(traceId) };
           }
           const reason = buildRefusalReason(
@@ -1277,11 +1387,14 @@ const generateCalc = async (
             event: "artifact.generate.failed",
             message: repairError instanceof Error ? repairError.message : "unknown error",
           });
+          await dumpGenerationError(repairError);
           return { response: buildRefusalResponse(traceId, 502, reason) };
         }
       } else if (error instanceof OpenAIBadRequestError) {
+        await dumpGenerationError(error);
         return { response: buildOpenAIBadRequestResponse(traceId, 502) };
       }
+
       if (!(error instanceof OpenAIParseError)) {
         const reason = buildRefusalReason(
           "OPENAI_ERROR",
@@ -1295,8 +1408,10 @@ const generateCalc = async (
           event: "artifact.generate.failed",
           message: error instanceof Error ? error.message : "unknown error",
         });
+        await dumpGenerationError(error);
         return { response: buildRefusalResponse(traceId, 502, reason) };
       }
+
       logEvent({
         level: "warn",
         op,
@@ -1304,6 +1419,7 @@ const generateCalc = async (
         event: "artifact.generate.parse_failed",
         message: error.message,
       });
+      await dumpGenerationError(error);
       return { response: buildOpenAIParseFailedResponse(traceId) };
     }
 
@@ -1666,6 +1782,13 @@ const generateCalc = async (
     }
   }
 
+    await dumpArtifacts({
+      stage: "generate",
+      genRequest: lastGenRequest,
+      genResponseRaw: lastGenResponseRaw,
+      html: finalHtml,
+    });
+
     if (!isValidManifest(finalManifest)) {
       const reason = buildRefusalReason(
         "OPENAI_ERROR",
@@ -1765,6 +1888,7 @@ const generateCalc = async (
       override_used: overrideUsed,
     });
 
+    overrideUsedForDump = overrideUsed;
     context.log(`Generated calculator ${calcId} version ${versionId}.`);
 
     return jsonResponse(
@@ -1773,6 +1897,28 @@ const generateCalc = async (
       buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed)
     );
   } catch (error) {
+    await dumpRedTeamArtifacts({
+      traceId,
+      stage: "error",
+      prompt: promptForDump,
+      scanRequest: lastScanRequest,
+      scanResponseRaw: lastScanResponseRaw,
+      genRequest: lastGenRequest,
+      genResponseRaw: lastGenResponseRaw,
+      error: {
+        message: error instanceof Error ? error.message : "unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
+        type: error instanceof Error ? error.name : typeof error,
+      },
+      meta: {
+        ts: new Date().toISOString(),
+        model: modelForDump,
+        scanPolicyMode: scanPolicyModeForDump,
+        overrideArmed: redTeamArmedForDump,
+        overrideUsed: overrideUsedForDump,
+      },
+    });
+
     const durationMs = Date.now() - startedAt;
     logEvent({
       level: "error",
