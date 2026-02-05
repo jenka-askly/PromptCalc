@@ -199,3 +199,22 @@ Security Risks: None.
 - Open web app and use "Dev red-team debug checks" toggles.
 - Enable "Generate all collateral when generating" to dump artifacts.
 - Use the UI result/error area to read `Trace ID` and `Dump folder` path, then inspect `.promptcalc_artifacts/<traceId>/`.
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Audited workspace imports for `@promptcalc/types` and `shared/types/dist` usage; confirmed there were no default imports and no direct dist-path imports in tracked source files.
+- Rebuilt `@promptcalc/types` so `shared/types/dist/*` stays aligned with named-export source entrypoint.
+- Cleared Vite cache directories when present and re-ran verification scans for default import patterns.
+
+**Files Touched**
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands Used**
+- `rg "import\\s+[\\w$]+\\s+from\\s+['\\\"]@promptcalc/types['\\\"]" -n`
+- `rg "shared/types/dist|/@fs/.+shared/types/dist|from\\s+['\\\"].*types/dist" -n`
+- `rg "@promptcalc/types|types/dist" -n`
+- `npm -w @promptcalc/types run build`
+- `python - <<'PY' ...` (remove `node_modules/.vite` and `apps/web/node_modules/.vite` if present)
+- `npm run dev` (failed in this environment because `concurrently` is not installed and npm registry access is blocked)
+- `rg "import\\s+[\\w$]+\\s+from\\s+['\\\"]@promptcalc/types['\\\"]" -n`
