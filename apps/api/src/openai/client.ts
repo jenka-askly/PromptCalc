@@ -180,6 +180,34 @@ const extractModelText = (
 const truncateMessage = (value: string, maxLength: number): string =>
   value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
 
+const extractSchemaLogDetails = (
+  format?: OpenAITextFormat
+): {
+  schemaName?: string;
+  schemaProperties?: string[];
+  schemaRequired?: string[];
+} => {
+  if (!format || format.type !== "json_schema") {
+    return {};
+  }
+  const schema = format.schema;
+  if (!schema || typeof schema !== "object") {
+    return { schemaName: format.name };
+  }
+  const properties =
+    typeof (schema as { properties?: unknown }).properties === "object"
+      ? (schema as { properties?: Record<string, unknown> }).properties
+      : undefined;
+  const required = Array.isArray((schema as { required?: unknown }).required)
+    ? ((schema as { required?: unknown }).required as Array<unknown>).map(String)
+    : undefined;
+  return {
+    schemaName: format.name,
+    schemaProperties: properties ? Object.keys(properties) : undefined,
+    schemaRequired: required,
+  };
+};
+
 const extractFirstJsonObject = (value: string): string | null => {
   const start = value.indexOf("{");
   if (start === -1) {
@@ -397,6 +425,7 @@ export const callOpenAIResponses = async <T>(
       if (!response.ok) {
         if (response.status === 400) {
           const errorMessage = extractErrorMessage(payload);
+          const schemaLogDetails = extractSchemaLogDetails(requestPayload.text?.format);
           logEvent({
             level: "warn",
             op,
@@ -410,6 +439,7 @@ export const callOpenAIResponses = async <T>(
               keys: Object.keys(item),
               contentKeys: item.content.map((content) => Object.keys(content)),
             })),
+            ...schemaLogDetails,
           });
           if (
             !usedJsonFallback &&

@@ -67,7 +67,7 @@ interface GenerateCalcRequest {
 
 interface PromptScanDecision {
   allowed: boolean;
-  refusalCode?: string;
+  refusalCode: string | null;
   reason: string;
   safeAlternative: string;
 }
@@ -226,11 +226,11 @@ export const promptScanSchema = {
   additionalProperties: false,
   properties: {
     allowed: { type: "boolean" },
-    refusalCode: { type: "string" },
+    refusalCode: { type: ["string", "null"] },
     reason: { type: "string" },
     safeAlternative: { type: "string" },
   },
-  required: ["allowed", "reason", "safeAlternative"],
+  required: ["allowed", "refusalCode", "reason", "safeAlternative"],
 };
 
 export const generationSchema = {

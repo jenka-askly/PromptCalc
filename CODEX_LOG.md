@@ -8,6 +8,26 @@ Security Risks: None.
 
 ## 2026-02-05
 **Summary**
+- Fixed PromptScanDecision schema strictness (required + additionalProperties) to resolve OpenAI 400 OPENAI_BAD_REQUEST and unblock generation.
+- Pinned OpenAI Responses model to gpt-4o-mini-2024-07-18 and added schema-focused 400 logging for prompt scan failures.
+- Added schema validation test coverage and updated continuity status notes (traceId example: 942e901d...).
+
+**Files Touched**
+- apps/api/src/functions/calcs.ts
+- apps/api/src/openai/client.ts
+- apps/api/src/generation/config.ts
+- apps/api/test/promptScanSchema.test.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- TraceId example from bug report: 942e901d...
+
+## 2026-02-05
+**Summary**
 - Removed legacy load gating refs, simplified retry flow, and made iframe load/ping idempotent per load to prevent regressions.
 - Tightened handshake handling to ignore non-handshake messages and wrong tokens without flipping status to error.
 - Updated viewer tests and continuity status notes for the cleanup.
