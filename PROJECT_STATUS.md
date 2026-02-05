@@ -33,12 +33,14 @@ Step 5 — End-to-end prototype validation (per README).
 - The API supports generating calculators and managing versions for saved calculators.
 - AI scan rubric + post-processing guardrails align with the sandbox model; offline warnings, DOM event wiring, inline JS, postMessage, and CSP unsafe-inline are allowed while true violations are refused.
 - Generated artifacts now avoid `<form>` tags and include deterministic safeguards that prevent form submission in sandboxed iframes.
+- Artifact generation uses strict schemas and resilient fallback parsing to avoid INVALID_MODEL_OUTPUT on valid JSON responses.
 
 ## Open Issues
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
 - Viewer load intermittency due to race; resolved by single-flight loadId + iframe key + message correlation.
 - DISALLOWED_PATTERN refusals when model output includes `new Function` for a standard calculator.
 - OpenAI Responses schema strictness (text.format) causes retries; currently falling back to `json_object`.
+- INVALID_MODEL_OUTPUT caused by schema invalidation + fragile fallback parsing.
 
 ## How to debug viewer load pipeline
 Look for the following dev logs in sequence:

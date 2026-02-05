@@ -65,6 +65,7 @@ export type OpenAIRequest = {
 export type OpenAIRequestOptions = {
   maxAttempts?: number;
   jsonSchemaFallback?: boolean;
+  devLogOutputExtraction?: boolean;
 };
 
 export type OpenAIResponse = {
@@ -72,7 +73,7 @@ export type OpenAIResponse = {
   model?: string;
   error?: { message?: string };
   output?: Array<{
-    content?: Array<{ type?: string; text?: string } | { type?: string; value?: string }>;
+    content?: Array<{ type?: string; text?: string; value?: unknown }>;
   }>;
   output_text?: string;
   usage?: {
@@ -108,21 +109,70 @@ export class OpenAIParseError extends Error {
   }
 }
 
-const extractOutputText = (payload: OpenAIResponse): string | null => {
-  if (typeof payload.output_text === "string") {
-    return payload.output_text;
-  }
+const extractOutputObject = (payload: OpenAIResponse): unknown | null => {
   const output = payload.output ?? [];
   for (const item of output) {
     const content = item.content ?? [];
     for (const part of content) {
-      if (typeof (part as { text?: string }).text === "string") {
-        return (part as { text: string }).text;
-      }
-      if (typeof (part as { value?: string }).value === "string") {
-        return (part as { value: string }).value;
+      const value = (part as { value?: unknown }).value;
+      if (value && typeof value === "object") {
+        return value;
       }
     }
+  }
+  return null;
+};
+
+const extractModelText = (
+  payload: OpenAIResponse,
+  traceId: string,
+  op: string,
+  devLogOutputExtraction = false
+): string | null => {
+  if (typeof payload.output_text === "string") {
+    if (devLogOutputExtraction) {
+      logEvent({
+        level: "info",
+        op,
+        traceId,
+        event: "openai.responses.output_text_path",
+        path: "output_text",
+      });
+    }
+    return payload.output_text;
+  }
+  const output = payload.output ?? [];
+  const parts: string[] = [];
+  for (const item of output) {
+    const content = item.content ?? [];
+    for (const part of content) {
+      const text = (part as { text?: string }).text;
+      if (typeof text === "string") {
+        parts.push(text);
+      }
+    }
+  }
+  if (parts.length > 0) {
+    const joined = parts.join("");
+    if (devLogOutputExtraction) {
+      logEvent({
+        level: "info",
+        op,
+        traceId,
+        event: "openai.responses.output_text_path",
+        path: "output_content_text",
+      });
+    }
+    return joined;
+  }
+  if (devLogOutputExtraction) {
+    logEvent({
+      level: "info",
+      op,
+      traceId,
+      event: "openai.responses.output_text_path",
+      path: "missing",
+    });
   }
   return null;
 };
@@ -193,6 +243,16 @@ const parseJsonLenient = <T>(value: string): T => {
     }
     return JSON.parse(candidate) as T;
   }
+};
+
+const parseJsonFlexible = <T>(value: unknown): T => {
+  if (value && typeof value === "object") {
+    return value as T;
+  }
+  if (typeof value === "string") {
+    return parseJsonLenient<T>(value);
+  }
+  throw new Error("OpenAI response did not contain JSON text or object content.");
 };
 
 const extractErrorMessage = (payload: OpenAIResponse): string | undefined => {
@@ -312,7 +372,13 @@ export const callOpenAIResponses = async <T>(
       } catch {
         payload = {};
       }
-      const outputText = extractOutputText(payload);
+      const outputText = extractModelText(
+        payload,
+        traceId,
+        op,
+        options.devLogOutputExtraction ?? false
+      );
+      const outputObject = extractOutputObject(payload);
 
       logEvent({
         level: response.ok ? "info" : "warn",
@@ -372,23 +438,29 @@ export const callOpenAIResponses = async <T>(
         }
         lastError = new Error(`OpenAI responded with status ${response.status}`);
         shouldRetry = RETRYABLE_STATUSES.has(response.status);
-      } else if (!outputText) {
+      } else if (requestPayload.text?.format?.type === "text") {
+        if (!outputText) {
+          lastError = new Error("OpenAI response missing output text");
+          shouldRetry = true;
+        } else {
+          return {
+            parsed: outputText as T,
+            raw: payload,
+          };
+        }
+      } else if (!outputText && !outputObject) {
         lastError = new Error("OpenAI response missing output text");
         shouldRetry = true;
       } else {
         try {
-          if (requestPayload.text?.format?.type === "text") {
-            return {
-              parsed: outputText as T,
-              raw: payload,
-            };
-          }
+          const jsonCandidate = outputObject ?? outputText;
           return {
-            parsed: parseJsonLenient<T>(outputText),
+            parsed: parseJsonFlexible<T>(jsonCandidate),
             raw: payload,
           };
         } catch (error) {
-          const snippet = truncateMessage(outputText, 200);
+          const snippet =
+            typeof outputText === "string" ? truncateMessage(outputText, 200) : "unavailable";
           const message = `JSON parse failed. outputSnippet=${snippet}`;
           logEvent({
             level: "warn",
@@ -397,9 +469,10 @@ export const callOpenAIResponses = async <T>(
             event: "openai.responses.parse_failed",
             attempt,
             message: error instanceof Error ? error.message : "JSON parse failed",
-            outputSample: truncateMessage(outputText, 120),
+            outputSample:
+              typeof outputText === "string" ? truncateMessage(outputText, 120) : undefined,
           });
-          lastError = new OpenAIParseError(message, outputText, attempt);
+          lastError = new OpenAIParseError(message, outputText ?? "", attempt);
           shouldRetry = true;
         }
       }

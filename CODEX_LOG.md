@@ -6,6 +6,18 @@ Security Risks: None.
 
 # CODEX Log
 
+## 2026-02-05
+**Summary**
+- Corrected Responses API schemas to enforce strict object definitions and pinned model selection for artifact generation.
+- Added robust output extraction, normalization, and validation with traceId logging to prevent INVALID_MODEL_OUTPUT from valid JSON fallback output.
+- Added tests for artifact generation parsing/normalization and schema strictness checks.
+
+**Commit/PR**
+- <commit-hash-or-pr-link>
+
+**Notes**
+- Validate CNC feed rate prompts succeed without INVALID_MODEL_OUTPUT and that parse failures log concise reasons only.
+
 ## 2026-02-04
 **Summary**
 - Stabilized calculator viewer loads with loadId/token single-flight handling, fresh iframes per load, and watchdog/message correlation.

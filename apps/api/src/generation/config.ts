@@ -34,7 +34,15 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const resolveOpenAIModel = (): string => (process.env.OPENAI_MODEL ?? "").trim();
+const PINNED_OPENAI_MODEL = "gpt-4o-mini-2024-07-18";
+
+const resolveOpenAIModel = (): string => {
+  const configured = (process.env.OPENAI_MODEL ?? "").trim();
+  if (configured === "gpt-4o-mini") {
+    return PINNED_OPENAI_MODEL;
+  }
+  return configured;
+};
 
 const resolveOpenAIBaseUrl = (): string =>
   process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
