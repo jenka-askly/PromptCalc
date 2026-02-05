@@ -5,4 +5,5 @@
  */
 
 export * from "./manifest";
+export * from "./redteam";
 export * from "./refusal";

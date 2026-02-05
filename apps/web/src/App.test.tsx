@@ -1,7 +1,7 @@
 /**
- * Purpose: Validate red-team arming controls require explicit confirmation before enabling bypass mode.
- * Persists: Reads and writes sessionStorage key promptcalc.redteam.armed.
- * Security Risks: Exercises UI control flow for dev-only safety override arming.
+ * Purpose: Validate dev red-team debug profile controls persist and expose profile IDs in the UI.
+ * Persists: Reads and writes sessionStorage key promptcalc.redteam.profile.
+ * Security Risks: Exercises dev-only red-team UI controls that affect server-side debugging behavior.
  */
 
 // @vitest-environment jsdom
@@ -17,7 +17,7 @@ vi.mock("./components/CalculatorViewer", () => ({
 
 const fetchMock = vi.fn<typeof fetch>();
 
-describe("App red-team arming", () => {
+describe("App red-team profile controls", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
     fetchMock.mockReset();
@@ -51,33 +51,18 @@ describe("App red-team arming", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
 
-  it("keeps red-team override disabled until Enable is confirmed", async () => {
+  it("shows debug checks and stores profile", async () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Bypass AI scan blocks (red team)")).toBeTruthy();
+      expect(screen.getByText("Dev red-team debug checks")).toBeTruthy();
     });
 
-    const yesOption = screen.getByRole("radio", { name: "Yes" });
-    fireEvent.click(yesOption);
+    fireEvent.click(screen.getByLabelText("Red-team profile enabled"));
+    fireEvent.click(screen.getByLabelText(/Generate all collateral when generating/));
 
-    expect(screen.getByText("Enable red-team override?")).toBeTruthy();
-    expect(screen.getByText("Not armed")).toBeTruthy();
-    expect(window.sessionStorage.getItem("promptcalc.redteam.armed")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Enable" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Armed")).toBeTruthy();
-    });
-    expect(window.sessionStorage.getItem("promptcalc.redteam.armed")).toBe("1");
-
-    const noOption = screen.getByRole("radio", { name: "No" });
-    fireEvent.click(noOption);
-
-    await waitFor(() => {
-      expect(screen.getByText("Not armed")).toBeTruthy();
-    });
-    expect(window.sessionStorage.getItem("promptcalc.redteam.armed")).toBeNull();
+    const stored = window.sessionStorage.getItem("promptcalc.redteam.profile");
+    expect(stored).toBeTruthy();
+    expect(screen.getByText(/profileId:/)).toBeTruthy();
   });
 });
