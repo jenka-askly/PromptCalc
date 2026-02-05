@@ -57,10 +57,25 @@ interface GenerateRefusalDetail {
   evidence?: string;
 }
 
+interface GenerateResponseDiagnostics {
+  traceId?: string;
+  dumpPaths?: string[];
+}
+
+interface GenerateErrorResponse extends GenerateResponseDiagnostics {
+  error?: {
+    message?: string;
+    code?: string;
+    type?: string;
+  };
+}
+
 type GenerateCalcResponse =
   | {
       kind: "ok";
       status: "ok";
+      traceId?: string;
+      dumpPaths?: string[];
       calcId: string;
       versionId: string;
       manifest: Record<string, unknown>;
@@ -68,18 +83,32 @@ type GenerateCalcResponse =
       scanOutcome: "allow" | "deny" | "skipped";
       overrideUsed: boolean;
     }
-  | { kind: "scan_block"; status: "refused"; refusalReason: GenerateRefusalReason }
+  | {
+      kind: "scan_block";
+      status: "refused";
+      refusalReason: GenerateRefusalReason;
+      traceId?: string;
+      dumpPaths?: string[];
+    }
   | {
       kind: "scan_warn";
       status: "scan_warn";
       requiresUserProceed: true;
+      traceId?: string;
+      dumpPaths?: string[];
       scanDecision: {
         refusalCode: string | null;
         categories: string[];
         reason: string;
       };
     }
-  | { kind: "scan_skipped"; status: "scan_skipped"; requiresUserProceed: true };
+  | {
+      kind: "scan_skipped";
+      status: "scan_skipped";
+      requiresUserProceed: true;
+      traceId?: string;
+      dumpPaths?: string[];
+    };
 
 type AuthState =
   | { mode: "unknown" }
@@ -178,6 +207,8 @@ const App = () => {
   );
   const [generateStatus, setGenerateStatus] = useState<string | null>(null);
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusalReason | null>(null);
+  const [generateTraceId, setGenerateTraceId] = useState<string | null>(null);
+  const [generateDumpPaths, setGenerateDumpPaths] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [redTeamArmed, setRedTeamArmed] = useState(() =>
     window.sessionStorage.getItem(RED_TEAM_SESSION_KEY) === "1"
@@ -380,48 +411,67 @@ const App = () => {
   const generateCalc = async (proceedOverride = false) => {
     setGenerateStatus(null);
     setGenerateRefusal(null);
+    setGenerateTraceId(null);
+    setGenerateDumpPaths([]);
     setCalcsError(null);
     setIsGenerating(true);
     try {
+      const payload = {
+        prompt: generatePrompt,
+        baseCalcId: currentArtifact.calcId ?? undefined,
+        baseVersionId: currentArtifact.versionId ?? undefined,
+        redTeamArmed,
+        proceedOverride,
+      };
+      let requestBody = "";
+      try {
+        requestBody = JSON.stringify(payload);
+      } catch {
+        console.error("Generate payload is not JSON-serializable", {
+          payloadKeys: Object.keys(payload),
+        });
+        setGenerateStatus(
+          "Request payload is not JSON-serializable (likely a DOM element or React event leaked into the payload)."
+        );
+        return;
+      }
+
       const response = await fetch("/api/calcs/generate", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          prompt: generatePrompt,
-          baseCalcId: currentArtifact.calcId ?? undefined,
-          baseVersionId: currentArtifact.versionId ?? undefined,
-          redTeamArmed,
-          proceedOverride,
-        }),
+        body: requestBody,
       });
 
-      const data = (await response.json()) as GenerateCalcResponse;
+      const data = (await response.json()) as GenerateCalcResponse | GenerateErrorResponse;
+      setGenerateTraceId(typeof data.traceId === "string" ? data.traceId : null);
+      setGenerateDumpPaths(Array.isArray(data.dumpPaths) ? data.dumpPaths : []);
       if (!response.ok) {
-        throw new Error(
-          `Generate failed (${response.status}): ${JSON.stringify(data)}`
-        );
+        const errorResponse = data as GenerateErrorResponse;
+        throw new Error(errorResponse.error?.message ?? `Generate failed (${response.status})`);
       }
 
-      if (data.kind === "scan_block") {
-        setGenerateRefusal(data.refusalReason);
+      const successData = data as GenerateCalcResponse;
+
+      if (successData.kind === "scan_block") {
+        setGenerateRefusal(successData.refusalReason);
         setGenerateStatus("Generation refused.");
         return;
       }
 
-      if (data.kind === "scan_warn") {
+      if (successData.kind === "scan_warn") {
         setPendingInterstitial({
           kind: "scan_warn",
-          refusalCode: data.scanDecision.refusalCode,
-          categories: data.scanDecision.categories,
-          reason: data.scanDecision.reason,
+          refusalCode: successData.scanDecision.refusalCode,
+          categories: successData.scanDecision.categories,
+          reason: successData.scanDecision.reason,
         });
         setGenerateStatus("Scan warning requires confirmation.");
         return;
       }
 
-      if (data.kind === "scan_skipped") {
+      if (successData.kind === "scan_skipped") {
         setPendingInterstitial({ kind: "scan_skipped" });
         setGenerateStatus("Scan is disabled in red-team mode. Confirmation required.");
         return;
@@ -429,22 +479,22 @@ const App = () => {
 
       setCurrentArtifact(
         buildCurrentArtifact({
-          artifactHtml: data.artifactHtml,
-          manifest: data.manifest,
+          artifactHtml: successData.artifactHtml,
+          manifest: successData.manifest,
           status: "saved",
-          calcId: data.calcId,
-          versionId: data.versionId,
+          calcId: successData.calcId,
+          versionId: successData.versionId,
         })
       );
-      if (data.scanOutcome === "deny" && data.overrideUsed) {
+      if (successData.scanOutcome === "deny" && successData.overrideUsed) {
         setScanBanner("warn");
-      } else if (data.scanOutcome === "skipped") {
+      } else if (successData.scanOutcome === "skipped") {
         setScanBanner("off");
       } else {
         setScanBanner(null);
       }
       setPendingInterstitial(null);
-      setGenerateStatus(`Generated ${data.calcId} v${data.versionId}`);
+      setGenerateStatus(`Generated ${successData.calcId} v${successData.versionId}`);
       await loadCalcs();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -557,6 +607,7 @@ const App = () => {
               {isGenerating ? "Generating..." : "Generate calculator"}
             </button>
             {generateStatus && <span className="status">{generateStatus}</span>}
+            {generateTraceId && <span className="status">Trace ID: {generateTraceId}</span>}
           </div>
           {generateRefusal && (
             <div className="refusal">
@@ -574,6 +625,16 @@ const App = () => {
               <div className="refusal-alt">
                 Try instead: {generateRefusal.safeAlternative}
               </div>
+            </div>
+          )}
+          {generateDumpPaths.length > 0 && (
+            <div className="dump-paths">
+              <strong>Debug dump paths</strong>
+              <ul>
+                {generateDumpPaths.map((dumpPath, index) => (
+                  <li key={`${dumpPath}-${index}`}>{dumpPath}</li>
+                ))}
+              </ul>
             </div>
           )}
           {redTeamCapabilityAvailable && (

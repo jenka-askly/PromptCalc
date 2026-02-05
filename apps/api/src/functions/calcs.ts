@@ -150,16 +150,22 @@ const buildOpenAIBadRequestRefusal = (): RefusalReason =>
     "Try again after updating server config."
   );
 
-const buildOpenAIBadRequestResponse = (traceId: string, status: number): HttpResponseInit =>
+const buildOpenAIBadRequestResponse = (
+  traceId: string,
+  status: number,
+  dumpPaths?: string[]
+): HttpResponseInit =>
   jsonResponse(traceId, status, {
     ...buildGenerateScanBlockResponse(buildOpenAIBadRequestRefusal()),
     traceId,
+    dumpPaths,
   });
 
-const buildOpenAIParseFailedResponse = (traceId: string): HttpResponseInit =>
+const buildOpenAIParseFailedResponse = (traceId: string, dumpPaths?: string[]): HttpResponseInit =>
   jsonResponse(traceId, 502, {
     code: "OPENAI_PARSE_FAILED",
     traceId,
+    dumpPaths,
   });
 
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
@@ -392,9 +398,14 @@ const pickAiScanSafeAlternative = (categories: Set<string>): string => {
 const buildRefusalResponse = (
   traceId: string,
   status: number,
-  reason: RefusalReason
+  reason: RefusalReason,
+  dumpPaths?: string[]
 ): HttpResponseInit =>
-  jsonResponse(traceId, status, buildGenerateScanBlockResponse(reason));
+  jsonResponse(traceId, status, {
+    ...buildGenerateScanBlockResponse(reason),
+    traceId,
+    dumpPaths,
+  });
 
 const getManifestValidationIssue = (manifest: Record<string, unknown>): string | null => {
   const specVersion = manifest.specVersion;
@@ -904,6 +915,7 @@ const generateCalc = async (
   let lastScanResponseRaw: unknown;
   let lastGenRequest: unknown;
   let lastGenResponseRaw: unknown;
+  const dumpPaths: string[] = [];
 
   try {
     const body = await parseGenerateRequestBody(req);
@@ -965,7 +977,7 @@ const generateCalc = async (
         event: "generation.gated",
         code: gateReason.code,
       });
-      return buildRefusalResponse(traceId, 200, gateReason);
+      return buildRefusalResponse(traceId, 200, gateReason, dumpPaths);
     }
 
     if (!config.apiKey || config.apiKey.trim().length === 0) {
@@ -1010,7 +1022,7 @@ const generateCalc = async (
       html?: string;
       error?: { message: string; stack?: string; code?: string; type?: string };
     }): Promise<void> => {
-      await dumpRedTeamArtifacts({
+      const dumped = await dumpRedTeamArtifacts({
         traceId,
         stage: params.stage,
         prompt,
@@ -1028,6 +1040,9 @@ const generateCalc = async (
           overrideUsed: overrideUsedForDump,
         },
       });
+      if (dumped?.paths?.length) {
+        dumpPaths.push(...dumped.paths);
+      }
     };
 
     logEvent({
@@ -1054,7 +1069,12 @@ const generateCalc = async (
           override_armed: true,
           override_used: false,
         });
-        return jsonResponse(traceId, 200, buildGenerateScanSkippedResponse());
+        await dumpArtifacts({ stage: "scan", scanRequest: lastScanRequest, scanResponseRaw: lastScanResponseRaw });
+        return jsonResponse(traceId, 200, {
+          ...buildGenerateScanSkippedResponse(),
+          traceId,
+          dumpPaths,
+        });
       }
       overrideUsed = true;
       overrideUsedForDump = true;
@@ -1114,7 +1134,7 @@ const generateCalc = async (
               type: error.name,
             },
           });
-          return buildOpenAIBadRequestResponse(traceId, 502);
+          return buildOpenAIBadRequestResponse(traceId, 502, dumpPaths);
         }
         if (error instanceof OpenAIParseError) {
           logEvent({
@@ -1138,7 +1158,7 @@ const generateCalc = async (
               type: error.name,
             },
           });
-          return buildOpenAIParseFailedResponse(traceId);
+          return buildOpenAIParseFailedResponse(traceId, dumpPaths);
         }
         const reason = buildRefusalReason(
           "OPENAI_ERROR",
@@ -1166,7 +1186,7 @@ const generateCalc = async (
             type: error instanceof Error ? error.name : typeof error,
           },
         });
-        return buildRefusalResponse(traceId, 502, reason);
+        return buildRefusalResponse(traceId, 502, reason, dumpPaths);
       }
 
       scanOutcome = promptDecision?.allowed ? "allow" : "deny";
@@ -1188,15 +1208,20 @@ const generateCalc = async (
       if (promptDecision && !promptDecision.allowed) {
         if (scanPolicyMode === "warn" && redTeamArmed) {
           if (!proceedOverride) {
-            return jsonResponse(
-              traceId,
-              200,
-              buildGenerateScanWarnResponse({
+            await dumpArtifacts({
+              stage: "scan",
+              scanRequest: lastScanRequest,
+              scanResponseRaw: lastScanResponseRaw,
+            });
+            return jsonResponse(traceId, 200, {
+              ...buildGenerateScanWarnResponse({
                 refusalCode: promptDecision.refusalCode,
                 categories: refusalCategories,
                 reason: promptDecision.reason,
-              })
-            );
+              }),
+              traceId,
+              dumpPaths,
+            });
           }
           overrideUsed = true;
           overrideUsedForDump = true;
@@ -1206,7 +1231,7 @@ const generateCalc = async (
             promptDecision.reason,
             promptDecision.safeAlternative
           );
-          return buildRefusalResponse(traceId, 200, reason);
+          return buildRefusalResponse(traceId, 200, reason, dumpPaths);
         }
       }
     }
@@ -1362,7 +1387,7 @@ const generateCalc = async (
         } catch (repairError) {
           if (repairError instanceof OpenAIBadRequestError) {
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIBadRequestResponse(traceId, 502) };
+            return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths) };
           }
           if (repairError instanceof OpenAIParseError) {
             logEvent({
@@ -1373,7 +1398,7 @@ const generateCalc = async (
               message: repairError.message,
             });
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIParseFailedResponse(traceId) };
+            return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths) };
           }
           const reason = buildRefusalReason(
             "OPENAI_ERROR",
@@ -1388,11 +1413,11 @@ const generateCalc = async (
             message: repairError instanceof Error ? repairError.message : "unknown error",
           });
           await dumpGenerationError(repairError);
-          return { response: buildRefusalResponse(traceId, 502, reason) };
+          return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths) };
         }
       } else if (error instanceof OpenAIBadRequestError) {
         await dumpGenerationError(error);
-        return { response: buildOpenAIBadRequestResponse(traceId, 502) };
+        return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths) };
       }
 
       if (!(error instanceof OpenAIParseError)) {
@@ -1409,7 +1434,7 @@ const generateCalc = async (
           message: error instanceof Error ? error.message : "unknown error",
         });
         await dumpGenerationError(error);
-        return { response: buildRefusalResponse(traceId, 502, reason) };
+        return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths) };
       }
 
       logEvent({
@@ -1420,7 +1445,7 @@ const generateCalc = async (
         message: error.message,
       });
       await dumpGenerationError(error);
-      return { response: buildOpenAIParseFailedResponse(traceId) };
+      return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths) };
     }
 
     return { result: generationResult ?? undefined };
@@ -1461,7 +1486,7 @@ const generateCalc = async (
         `Artifact generation returned invalid data. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason);
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths);
     }
 
     const parsedResult = normalized.value;
@@ -1472,7 +1497,7 @@ const generateCalc = async (
         `Artifact generation refused. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
 
     artifactBytes = Buffer.byteLength(parsedResult.artifactHtml, "utf8");
@@ -1490,7 +1515,7 @@ const generateCalc = async (
         artifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
 
     const manifestIssue = getManifestValidationIssue(parsedResult.manifest);
@@ -1507,7 +1532,7 @@ const generateCalc = async (
         event: "artifact.generate.invalid_manifest",
         reason: manifestIssue,
       });
-      return buildRefusalResponse(traceId, 502, reason);
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths);
     }
 
     const baseManifest = {
@@ -1537,7 +1562,7 @@ const generateCalc = async (
         artifactBytes: finalArtifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
 
     if (
@@ -1555,7 +1580,7 @@ const generateCalc = async (
         traceId,
         event: "artifact.evaluator.missing",
       });
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
 
     const scanResult = scanArtifactHtml(finalHtml, policy);
@@ -1586,7 +1611,7 @@ const generateCalc = async (
       if (shouldRetry) {
         continue;
       }
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
 
     logEvent({
@@ -1605,7 +1630,7 @@ const generateCalc = async (
       `Artifact generation did not produce a valid manifest. traceId=${traceId}`,
       "Try a simpler offline calculator prompt."
     );
-    return buildRefusalResponse(traceId, 502, reason);
+    return buildRefusalResponse(traceId, 502, reason, dumpPaths);
   }
 
   try {
@@ -1733,7 +1758,7 @@ const generateCalc = async (
         issues: issueLog.summaryJson,
         issueSummaryLines: issueLog.summaryLines,
       });
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
     if (parsedIssues.length > 0) {
       const allowedLog = buildAiScanIssueLogPayload(allowed);
@@ -1778,7 +1803,7 @@ const generateCalc = async (
         "AI code scan failed.",
         "Use a smaller, simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason);
+      return buildRefusalResponse(traceId, 200, reason, dumpPaths);
     }
   }
 
@@ -1795,7 +1820,7 @@ const generateCalc = async (
         "Generated manifest is missing required fields.",
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason);
+      return buildRefusalResponse(traceId, 502, reason, dumpPaths);
     }
 
     const calcId = normalizeId(body.baseCalcId || randomUUID());
@@ -1891,13 +1916,13 @@ const generateCalc = async (
     overrideUsedForDump = overrideUsed;
     context.log(`Generated calculator ${calcId} version ${versionId}.`);
 
-    return jsonResponse(
+    return jsonResponse(traceId, 200, {
+      ...buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed),
       traceId,
-      200,
-      buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed)
-    );
+      dumpPaths,
+    });
   } catch (error) {
-    await dumpRedTeamArtifacts({
+    const dumped = await dumpRedTeamArtifacts({
       traceId,
       stage: "error",
       prompt: promptForDump,
@@ -1918,6 +1943,9 @@ const generateCalc = async (
         overrideUsed: overrideUsedForDump,
       },
     });
+    if (dumped?.paths?.length) {
+      dumpPaths.push(...dumped.paths);
+    }
 
     const durationMs = Date.now() - startedAt;
     logEvent({
@@ -1935,7 +1963,14 @@ const generateCalc = async (
       event: "request.error",
       message: error instanceof Error ? error.message : "unknown error",
     });
-    return jsonResponse(traceId, 500, { code: "INTERNAL", traceId });
+    return jsonResponse(traceId, 500, {
+      error: {
+        message: error instanceof Error ? error.message : "Internal server error",
+        type: error instanceof Error ? error.name : typeof error,
+      },
+      traceId,
+      dumpPaths,
+    });
   }
 };
 
