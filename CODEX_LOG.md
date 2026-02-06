@@ -8,6 +8,31 @@ Security Risks: None.
 
 ## 2026-02-06 (UTC)
 **Objective**
+- Fix TypeScript resolution for `node:` imports in `apps/api` and document the Azure Functions requirement.
+
+**Approach**
+- Switched the API `tsconfig.json` to `module: Node16` + `moduleResolution: Node16` for `node:` specifier support.
+- Logged the Node16 resolution requirement for Azure Functions TypeScript builds in continuity docs.
+
+**Files Touched**
+- apps/api/tsconfig.json
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands Run**
+- `npm -w apps/api run build` *(failed: TS2307 cannot find module 'node:child_process'/'node:fs'/'node:process')*
+- `npm run dev` *(failed: `concurrently` not found in environment)*
+- `rg -n "node:" apps/api/src`
+
+**Outcomes**
+- API TS config now targets Node16 module resolution for `node:` specifiers in Azure Functions builds.
+- Local build/dev verification remains blocked in this environment due to missing TypeScript `node:` resolution support and missing `concurrently`.
+
+**Follow-ups**
+- Ensure dependencies/TypeScript version support Node16 `node:` specifiers, then re-run build/dev to confirm Vite proxy errors are resolved.
+
+## 2026-02-06 (UTC)
+**Objective**
 - Make OpenAI Responses timeout configurable, classify aborts as OPENAI_REQUEST_ABORTED, and improve abort diagnostics in logs/dumps.
 
 **Approach**
