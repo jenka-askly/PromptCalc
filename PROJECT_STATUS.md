@@ -91,3 +91,9 @@ Look for the following dev logs in sequence:
 - Dev debug toggles now persist in-tab via `sessionStorage` and include a Reset action to clear persisted profile state.
 - Full collateral dumps now use deterministic per-trace folders at `.promptcalc_artifacts/<traceId>/` and UI surfaces `Trace ID` plus `Dump folder` directly in result/error status.
 - Updated `shared/types` TypeScript build target to ESM (`module: ES2022`, `moduleResolution: Bundler`) so Vite can consume named exports from `@promptcalc/types` without CommonJS interop issues.
+
+
+## 2026-02-05 Generation Parse-Diagnostics Update
+- Increased default generation token budget for calculator generation to reduce truncation risk (`OPENAI_MAX_TOKENS` default now 7000).
+- Generation JSON parse failures are now classified as `MODEL_OUTPUT_JSON_INVALID` and include trace/dump metadata in API responses.
+- In red-team + `dumpCollateral` mode, parse failures now always dump full raw model text (`06_model_output_raw.txt`) and parse exception details (`09_parse_error.json`) alongside existing `gen_response_raw.json`, `validation.json`, and `profile.json`.

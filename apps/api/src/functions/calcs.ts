@@ -225,7 +225,12 @@ const buildOpenAIParseFailedResponse = (
   debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
 ): HttpResponseInit =>
   jsonResponse(traceId, 502, {
-    code: "OPENAI_PARSE_FAILED",
+    code: "MODEL_OUTPUT_JSON_INVALID",
+    error: {
+      code: "MODEL_OUTPUT_JSON_INVALID",
+      type: "MODEL_OUTPUT_JSON_INVALID",
+      message: "Model output was invalid JSON.",
+    },
     traceId,
     dumpDir,
     dumpPaths,
@@ -1167,6 +1172,15 @@ const generateCalc = async (
       html?: string;
       validation?: unknown;
       error?: { message: string; stack?: string; code?: string; type?: string };
+      parseDetails?: {
+        parseError?: {
+          message?: string;
+          stack?: string;
+          snippetPrefix?: string;
+          snippetSuffix?: string;
+        };
+        modelOutputRawText?: string;
+      };
     }): Promise<void> => {
       const dumped = await dumpRedTeamArtifacts({
         traceId,
@@ -1179,6 +1193,7 @@ const generateCalc = async (
         html: params.html,
         validation: params.validation,
         error: params.error,
+        parseDetails: params.parseDetails,
         meta: {
           ts: new Date().toISOString(),
           model: config.model,
@@ -1509,6 +1524,17 @@ const generateCalc = async (
     let generationResult: ArtifactGenerationOutput | null = null;
 
     const dumpGenerationError = async (error: unknown): Promise<void> => {
+      const parseDetails = error instanceof OpenAIParseError
+        ? {
+            parseError: {
+              message: error.parseErrorMessage,
+              stack: error.parseErrorStack,
+              snippetPrefix: error.snippetPrefix,
+              snippetSuffix: error.snippetSuffix,
+            },
+            modelOutputRawText: error.rawText,
+          }
+        : undefined;
       await dumpArtifacts({
         stage: "error",
         genRequest: lastGenRequest,
@@ -1523,7 +1549,9 @@ const generateCalc = async (
           message: error instanceof Error ? error.message : "unknown error",
           stack: error instanceof Error ? error.stack : undefined,
           type: error instanceof Error ? error.name : typeof error,
+          code: error instanceof OpenAIParseError ? "MODEL_OUTPUT_JSON_INVALID" : undefined,
         },
+        parseDetails,
       });
     };
 
@@ -1533,6 +1561,7 @@ const generateCalc = async (
           { role: "system", content: [{ type: "input_text", text: generationSystem }] },
           { role: "user", content: [{ type: "input_text", text: userText }] },
         ],
+        max_output_tokens: openAIConfig.maxTokens,
         text: {
           format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema, effectiveProfile.schemaEnforcement),
         },
@@ -1559,6 +1588,7 @@ const generateCalc = async (
               { role: "system", content: [{ type: "input_text", text: generationSystem }] },
               { role: "user", content: [{ type: "input_text", text: repairText }] },
             ],
+            max_output_tokens: openAIConfig.maxTokens,
             text: {
               format: buildJsonSchemaResponseFormat("ArtifactGeneration", generationSchema, effectiveProfile.schemaEnforcement),
             },

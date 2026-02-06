@@ -38,6 +38,15 @@ type DumpArgs = {
   html?: string;
   validation?: unknown;
   error?: DumpError;
+  parseDetails?: {
+    parseError?: {
+      message?: string;
+      stack?: string;
+      snippetPrefix?: string;
+      snippetSuffix?: string;
+    };
+    modelOutputRawText?: string;
+  };
   meta: DumpMeta;
 };
 
@@ -103,6 +112,12 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; 
   if (args.error) {
     await push("error.json", { error: args.error });
   }
+  if (args.parseDetails?.modelOutputRawText !== undefined) {
+    await push("06_model_output_raw.txt", args.parseDetails.modelOutputRawText, true);
+  }
+  if (args.parseDetails?.parseError) {
+    await push("09_parse_error.json", { parseError: args.parseDetails.parseError });
+  }
 
   return { dumpDir: traceDir, paths };
 };
@@ -140,6 +155,7 @@ const dumpLegacyStage = async (args: DumpArgs): Promise<string[]> => {
     genResponseRaw: args.genResponseRaw,
     validation: args.validation,
     error: args.error,
+    parseDetails: args.parseDetails,
     meta: args.meta,
   });
 

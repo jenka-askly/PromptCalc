@@ -70,6 +70,7 @@ interface GenerateResponseDiagnostics {
 }
 
 interface GenerateErrorResponse extends GenerateResponseDiagnostics {
+  code?: string;
   error?: {
     message?: string;
     code?: string;
@@ -488,6 +489,16 @@ const App = () => {
       }
       if (!response.ok) {
         const errorResponse = data as GenerateErrorResponse;
+        const errorCode =
+          typeof errorResponse.code === "string"
+            ? errorResponse.code
+            : typeof errorResponse.error?.code === "string"
+              ? errorResponse.error.code
+              : undefined;
+        if (errorCode === "MODEL_OUTPUT_JSON_INVALID") {
+          setGenerateStatus("Model output was invalid JSON (likely truncated). See dump folder.");
+          return;
+        }
         throw new Error(errorResponse.error?.message ?? `Generate failed (${response.status})`);
       }
 

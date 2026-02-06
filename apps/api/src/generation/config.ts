@@ -61,7 +61,7 @@ export const getGenerationConfig = async (): Promise<GenerationConfig> => ({
   model: resolveOpenAIModel(),
   baseUrl: resolveOpenAIBaseUrl(),
   timeoutMs: parseNumber(process.env.OPENAI_TIMEOUT_MS, 25_000),
-  maxTokens: parseNumber(process.env.OPENAI_MAX_TOKENS, 2_500),
+  maxTokens: parseNumber(process.env.OPENAI_MAX_TOKENS, 7_000),
   maxArtifactBytes: await getMaxArtifactBytes(),
   aiScanFailClosed: parseBoolean(process.env.AI_SCAN_FAIL_CLOSED, false),
 });
