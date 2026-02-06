@@ -25,7 +25,17 @@ type DumpMeta = {
   dumpCollateral?: boolean;
 };
 
-type DumpError = { message: string; stack?: string; code?: string; type?: string };
+type DumpError = {
+  message: string;
+  stack?: string;
+  code?: string;
+  type?: string;
+  timeoutMs?: number;
+  elapsedMs?: number;
+  model?: string;
+  maxOutputTokens?: number;
+  requestId?: string;
+};
 
 type DumpArgs = {
   traceId: string;

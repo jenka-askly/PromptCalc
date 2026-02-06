@@ -122,6 +122,27 @@ export class OpenAIParseError extends Error {
   }
 }
 
+export class OpenAIRequestAbortedError extends Error {
+  timeoutMs: number;
+  elapsedMs: number;
+  model: string;
+  maxOutputTokens: number;
+  requestId?: string;
+
+  constructor(message: string, details: { timeoutMs: number; elapsedMs: number; model: string; maxOutputTokens: number; requestId?: string }) {
+    super(message);
+    this.name = "OpenAIRequestAbortedError";
+    this.timeoutMs = details.timeoutMs;
+    this.elapsedMs = details.elapsedMs;
+    this.model = details.model;
+    this.maxOutputTokens = details.maxOutputTokens;
+    this.requestId = details.requestId;
+  }
+}
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
+
 const extractOutputObject = (payload: OpenAIResponse): unknown | null => {
   const output = payload.output ?? [];
   for (const item of output) {
@@ -532,6 +553,31 @@ export const callOpenAIResponses = async <T>(
         }
       }
     } catch (error) {
+      if (isAbortError(error)) {
+        const elapsedMs = Date.now() - startedAt;
+        const abortedError = new OpenAIRequestAbortedError("OpenAI request aborted.", {
+          timeoutMs: config.timeoutMs,
+          elapsedMs,
+          model: requestPayload.model,
+          maxOutputTokens: requestPayload.max_output_tokens,
+        });
+        lastError = abortedError;
+        logEvent({
+          level: "warn",
+          op,
+          traceId,
+          event: "openai.responses.aborted",
+          message: abortedError.message,
+          attempt,
+          timeoutMs: abortedError.timeoutMs,
+          elapsedMs: abortedError.elapsedMs,
+          model: abortedError.model,
+          maxOutputTokens: abortedError.maxOutputTokens,
+          requestId: abortedError.requestId,
+        });
+        shouldRetry = true;
+        continue;
+      }
       if (error instanceof OpenAIBadRequestError) {
         throw error;
       }

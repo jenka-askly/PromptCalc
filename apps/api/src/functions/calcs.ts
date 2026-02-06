@@ -38,6 +38,7 @@ import {
 } from "../generation/aiScan";
 import {
   buildGenerateOkResponse,
+  buildGenerateErrorResponse,
   buildGenerateScanBlockResponse,
   buildGenerateScanSkippedResponse,
   buildGenerateScanWarnResponse,
@@ -48,6 +49,7 @@ import {
   callOpenAIResponses,
   OpenAIBadRequestError,
   OpenAIParseError,
+  OpenAIRequestAbortedError,
   type OpenAIRequest,
   type OpenAITextFormat,
 } from "../openai/client";
@@ -238,6 +240,38 @@ const buildOpenAIParseFailedResponse = (
     profileId: debug?.profileId,
     skippedByProfile: debug?.skippedByProfile,
   });
+
+const buildOpenAIRequestAbortedResponse = (
+  traceId: string,
+  status: number,
+  dumpPaths?: string[],
+  dumpDir?: string | null,
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
+): HttpResponseInit =>
+  jsonResponse(traceId, status, {
+    ...buildGenerateErrorResponse(
+      "OPENAI_REQUEST_ABORTED",
+      "OpenAI request timed out/aborted. See dump folder."
+    ),
+    traceId,
+    dumpDir,
+    dumpPaths,
+    effectiveProfile: debug?.effectiveProfile,
+    profileId: debug?.profileId,
+    skippedByProfile: debug?.skippedByProfile,
+  });
+
+const buildOpenAIAbortDumpError = (error: OpenAIRequestAbortedError) => ({
+  message: error.message,
+  stack: error.stack,
+  type: error.name,
+  code: "OPENAI_REQUEST_ABORTED",
+  timeoutMs: error.timeoutMs,
+  elapsedMs: error.elapsedMs,
+  model: error.model,
+  maxOutputTokens: error.maxOutputTokens,
+  requestId: error.requestId,
+});
 
 const buildSchemaValidationFailedResponse = (
   traceId: string,
@@ -1343,6 +1377,27 @@ const generateCalc = async (
           });
           return buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
         }
+        if (error instanceof OpenAIRequestAbortedError) {
+          logEvent({
+            level: "warn",
+            op,
+            traceId,
+            event: "prompt.scan.aborted",
+            message: error.message,
+            timeoutMs: error.timeoutMs,
+            elapsedMs: error.elapsedMs,
+            model: error.model,
+            maxOutputTokens: error.maxOutputTokens,
+            requestId: error.requestId,
+          });
+          await dumpArtifacts({
+            stage: "error",
+            scanRequest: lastScanRequest,
+            scanResponseRaw: lastScanResponseRaw,
+            error: buildOpenAIAbortDumpError(error),
+          });
+          return buildOpenAIRequestAbortedResponse(traceId, 504, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+        }
         if (error instanceof OpenAIParseError) {
           logEvent({
             level: "warn",
@@ -1566,12 +1621,14 @@ const generateCalc = async (
           errors: lastValidationErrors,
           parsedJsonPresent: lastParsedGenerationJson !== undefined,
         },
-        error: {
-          message: error instanceof Error ? error.message : "unknown error",
-          stack: error instanceof Error ? error.stack : undefined,
-          type: error instanceof Error ? error.name : typeof error,
-          code: error instanceof OpenAIParseError ? "MODEL_OUTPUT_JSON_INVALID" : undefined,
-        },
+        error: error instanceof OpenAIRequestAbortedError
+          ? buildOpenAIAbortDumpError(error)
+          : {
+              message: error instanceof Error ? error.message : "unknown error",
+              stack: error instanceof Error ? error.stack : undefined,
+              type: error instanceof Error ? error.name : typeof error,
+              code: error instanceof OpenAIParseError ? "MODEL_OUTPUT_JSON_INVALID" : undefined,
+            },
         parseDetails,
       });
     };
@@ -1632,6 +1689,10 @@ const generateCalc = async (
             await dumpGenerationError(repairError);
             return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
           }
+          if (repairError instanceof OpenAIRequestAbortedError) {
+            await dumpGenerationError(repairError);
+            return { response: buildOpenAIRequestAbortedResponse(traceId, 504, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+          }
           if (repairError instanceof OpenAIParseError) {
             logEvent({
               level: "warn",
@@ -1661,6 +1722,9 @@ const generateCalc = async (
       } else if (error instanceof OpenAIBadRequestError) {
         await dumpGenerationError(error);
         return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+      } else if (error instanceof OpenAIRequestAbortedError) {
+        await dumpGenerationError(error);
+        return { response: buildOpenAIRequestAbortedResponse(traceId, 504, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
       }
 
       if (!(error instanceof OpenAIParseError)) {

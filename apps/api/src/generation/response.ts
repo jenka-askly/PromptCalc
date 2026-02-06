@@ -51,11 +51,19 @@ export type GenerateScanSkippedResponse = {
   requiresUserProceed: true;
 };
 
+export type GenerateErrorResponse = {
+  kind: "error";
+  status: "error";
+  errorCode: string;
+  message: string;
+};
+
 export type GenerateResponse =
   | GenerateOkResponse
   | GenerateScanBlockResponse
   | GenerateScanWarnResponse
-  | GenerateScanSkippedResponse;
+  | GenerateScanSkippedResponse
+  | GenerateErrorResponse;
 
 export const buildGenerateOkResponse = (
   calcId: string,
@@ -102,4 +110,14 @@ export const buildGenerateScanSkippedResponse = (): GenerateScanSkippedResponse 
   kind: "scan_skipped",
   status: "scan_skipped",
   requiresUserProceed: true,
+});
+
+export const buildGenerateErrorResponse = (
+  errorCode: string,
+  message: string
+): GenerateErrorResponse => ({
+  kind: "error",
+  status: "error",
+  errorCode,
+  message,
 });
