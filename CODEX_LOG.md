@@ -8,6 +8,30 @@ Security Risks: None.
 
 ## 2026-02-06 (UTC)
 **Objective**
+- Remove `node:` specifiers from the API diagnostics build stamp imports.
+
+**Approach**
+- Swapped `node:`-prefixed imports in `buildStamp.ts` for bare Node core module specifiers.
+- Updated continuity status notes to reflect the import change.
+
+**Files Touched**
+- apps/api/src/diagnostics/buildStamp.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands Run**
+- `npx tsc -p apps/api/tsconfig.json --noEmit` *(failed: missing Node core module typings for `child_process`, `fs`, `process`)*
+- `npm run dev` *(failed: `concurrently` not found in environment)*
+
+**Outcomes**
+- Diagnostics build stamp helper now uses non-`node:` imports to improve compatibility.
+- Local verification blocked in this environment due to missing Node typings and `concurrently`.
+
+**Follow-ups**
+- Ensure `@types/node` is available to the API TypeScript build, then re-run the API build check and dev server.
+
+## 2026-02-06 (UTC)
+**Objective**
 - Fix TypeScript resolution for `node:` imports in `apps/api` and document the Azure Functions requirement.
 
 **Approach**
