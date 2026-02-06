@@ -486,3 +486,16 @@ Security Risks: None.
 
 **Follow-ups**
 - Retry `npm install` with registry access, then re-run `npm run dev` and verify `http://localhost:7071/api/health` responds without Vite proxy errors.
+
+## 2026-02-06 (UTC)
+**Summary**
+- Swapped diagnostics build stamp imports to explicit `node:` specifiers to avoid Azure Functions + Node type collisions.
+- Updated project status to reflect the diagnostics build stamp import change.
+
+**Files changed**
+- apps/api/src/diagnostics/buildStamp.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run**
+- `npm run dev`
