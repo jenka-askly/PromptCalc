@@ -4,8 +4,9 @@
  * Security Risks: Reads environment variables and git metadata; do not include secrets.
  */
 
-import { execSync } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import process from "node:process";
 import path from "path";
 
 export type BuildStamp = {
