@@ -66,6 +66,7 @@ export type OpenAIRequestOptions = {
   maxAttempts?: number;
   jsonSchemaFallback?: boolean;
   devLogOutputExtraction?: boolean;
+  jsonResultValidator?: (value: unknown) => boolean;
 };
 
 export type OpenAIResponse = {
@@ -128,6 +129,7 @@ export class OpenAIRequestAbortedError extends Error {
   model: string;
   maxOutputTokens: number;
   requestId?: string;
+  classification: "timeout";
 
   constructor(message: string, details: { timeoutMs: number; elapsedMs: number; model: string; maxOutputTokens: number; requestId?: string }) {
     super(message);
@@ -137,6 +139,7 @@ export class OpenAIRequestAbortedError extends Error {
     this.model = details.model;
     this.maxOutputTokens = details.maxOutputTokens;
     this.requestId = details.requestId;
+    this.classification = "timeout";
   }
 }
 
@@ -157,24 +160,12 @@ const extractOutputObject = (payload: OpenAIResponse): unknown | null => {
   return null;
 };
 
-const extractModelText = (
+const extractModelTexts = (
   payload: OpenAIResponse,
   traceId: string,
   op: string,
   devLogOutputExtraction = false
-): string | null => {
-  if (typeof payload.output_text === "string") {
-    if (devLogOutputExtraction) {
-      logEvent({
-        level: "info",
-        op,
-        traceId,
-        event: "openai.responses.output_text_path",
-        path: "output_text",
-      });
-    }
-    return payload.output_text;
-  }
+): string[] => {
   const output = payload.output ?? [];
   const parts: string[] = [];
   for (const item of output) {
@@ -187,17 +178,28 @@ const extractModelText = (
     }
   }
   if (parts.length > 0) {
-    const joined = parts.join("");
     if (devLogOutputExtraction) {
       logEvent({
         level: "info",
         op,
         traceId,
         event: "openai.responses.output_text_path",
-        path: "output_content_text",
+        path: "output_content_text_parts",
       });
     }
-    return joined;
+    return parts;
+  }
+  if (typeof payload.output_text === "string") {
+    if (devLogOutputExtraction) {
+      logEvent({
+        level: "info",
+        op,
+        traceId,
+        event: "openai.responses.output_text_path",
+        path: "output_text",
+      });
+    }
+    return [payload.output_text];
   }
   if (devLogOutputExtraction) {
     logEvent({
@@ -208,7 +210,7 @@ const extractModelText = (
       path: "missing",
     });
   }
-  return null;
+  return [];
 };
 
 const truncateMessage = (value: string, maxLength: number): string =>
@@ -315,6 +317,43 @@ const parseJsonFlexible = <T>(value: unknown): T => {
     return parseJsonLenient<T>(value);
   }
   throw new Error("OpenAI response did not contain JSON text or object content.");
+};
+
+export const parseJsonFromOutputTexts = <T>(
+  outputTexts: string[],
+  validator?: (value: unknown) => boolean
+): T => {
+  if (outputTexts.length === 0) {
+    throw new Error("OpenAI response missing output text");
+  }
+
+  let lastError: unknown;
+  let firstParsed: T | undefined;
+  let firstParsedSet = false;
+
+  for (const outputText of outputTexts) {
+    try {
+      const parsed = parseJsonFlexible<T>(outputText);
+      if (!firstParsedSet) {
+        firstParsed = parsed;
+        firstParsedSet = true;
+      }
+      if (!validator || validator(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (validator && firstParsedSet) {
+    throw new Error("Parsed JSON did not match expected schema.");
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error("JSON parse failed");
 };
 
 const extractErrorMessage = (payload: OpenAIResponse): string | undefined => {
@@ -434,12 +473,13 @@ export const callOpenAIResponses = async <T>(
       } catch {
         payload = {};
       }
-      const outputText = extractModelText(
+      const outputTexts = extractModelTexts(
         payload,
         traceId,
         op,
         options.devLogOutputExtraction ?? false
       );
+      const outputText = outputTexts.length > 0 ? outputTexts.join("") : null;
       const outputObject = extractOutputObject(payload);
 
       logEvent({
@@ -517,9 +557,15 @@ export const callOpenAIResponses = async <T>(
         shouldRetry = true;
       } else {
         try {
-          const jsonCandidate = outputObject ?? outputText;
+          if (outputObject) {
+            const parsed = parseJsonFlexible<T>(outputObject);
+            if (options.jsonResultValidator && !options.jsonResultValidator(parsed)) {
+              throw new Error("Parsed JSON did not match expected schema.");
+            }
+            return { parsed, raw: payload };
+          }
           return {
-            parsed: parseJsonFlexible<T>(jsonCandidate),
+            parsed: parseJsonFromOutputTexts<T>(outputTexts, options.jsonResultValidator),
             raw: payload,
           };
         } catch (error) {
@@ -568,6 +614,8 @@ export const callOpenAIResponses = async <T>(
           traceId,
           event: "openai.responses.aborted",
           message: abortedError.message,
+          errorName: error instanceof Error ? error.name : undefined,
+          classification: abortedError.classification,
           attempt,
           timeoutMs: abortedError.timeoutMs,
           elapsedMs: abortedError.elapsedMs,

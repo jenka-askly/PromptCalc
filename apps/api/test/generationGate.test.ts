@@ -14,7 +14,7 @@ const baseConfig = {
   model: "gpt-4.1",
   baseUrl: "https://api.openai.com/v1",
   timeoutMs: 1000,
-  maxTokens: 2500,
+  maxTokens: 8000,
   maxArtifactBytes: 200000,
 };
 

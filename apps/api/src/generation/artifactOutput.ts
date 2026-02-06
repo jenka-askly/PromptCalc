@@ -121,7 +121,7 @@ const parseJsonFlexible = (
   }
 };
 
-const hasExpectedArtifactShape = (value: unknown): boolean => {
+export const isArtifactGenerationCandidate = (value: unknown): boolean => {
   if (!isRecord(value)) {
     return false;
   }
@@ -201,7 +201,7 @@ const validateManifestShape = (manifest: Record<string, unknown>): string | null
 export const analyzeArtifactGenerationOutput = (value: unknown): ArtifactOutputAnalysis => {
   let parsed: unknown;
   try {
-    parsed = parseJsonFlexible(value, hasExpectedArtifactShape);
+    parsed = parseJsonFlexible(value, isArtifactGenerationCandidate);
   } catch (error) {
     return {
       validationErrors: [

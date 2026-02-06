@@ -47,6 +47,8 @@ Step 5 — End-to-end prototype validation (per README).
 - Artifact generation JSON parsing now uses first-valid-object selection for duplicated model outputs, preferring the first balanced JSON object that matches expected artifact shape.
 - Red-team validation failure dumps now always include full validation details plus rejected normalized candidate HTML, and parse failures write both compatibility (`06_*`/`09_*`) and canonical (`model_output_raw.txt`/`parse_error.json`) files.
 - OpenAI request timeout is configurable via `PROMPTCALC_OPENAI_TIMEOUT_MS` (default 60s, or 180s when `PROMPTCALC_REDKIT=1`), and request aborts are classified as `OPENAI_REQUEST_ABORTED` with red-team dumps capturing timeout/elapsed/model/token diagnostics.
+- Artifact generation parsing now selects the first valid JSON payload from ordered OpenAI `output_text` messages (filtering for `artifactHtml` + `manifest`), reducing truncation/duplication issues while keeping prompt logs red-team only.
+- Red-team collateral bundles now always include `model_output_raw.txt` (concatenated output_texts) and normalized `extracted_candidate.html` alongside parse/validation error JSON for failed generations.
 - Build/version stamping now accompanies generate responses and server logs, and red-team Debug UI + dumps include trace-linked build metadata (see `.promptcalc_artifacts/<traceId>/version.json`).
 ## Open Issues
 
@@ -101,7 +103,7 @@ Look for the following dev logs in sequence:
 
 
 ## 2026-02-05 Generation Parse-Diagnostics Update
-- Increased default generation token budget for calculator generation to reduce truncation risk (`OPENAI_MAX_TOKENS` default now 7000).
+- Increased default generation token budget for calculator generation to reduce truncation risk (`OPENAI_MAX_TOKENS` default now 8000).
 - Generation JSON parse failures are now classified as `MODEL_OUTPUT_JSON_INVALID` and include trace/dump metadata in API responses.
 - In red-team + `dumpCollateral` mode, parse failures now always dump full raw model text (`06_model_output_raw.txt`) and parse exception details (`09_parse_error.json`) alongside existing `gen_response_raw.json`, `validation.json`, and `profile.json`.
 
