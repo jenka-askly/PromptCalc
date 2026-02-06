@@ -43,6 +43,9 @@ Step 5 — End-to-end prototype validation (per README).
 - Generator system instructions now include an explicit manifest skeleton with full required capabilities booleans (`network`, `storage`, `dynamicCode`) and a strict requirement that all schema-required fields must be present.
 - Red-team collateral dumping now captures validation diagnostics for generation/schema failures: raw model output, parsed JSON (when available), extracted HTML, and structured validation errors.
 - Schema-validation generation failures now return `SCHEMA_VALIDATION_FAILED` with trace/dump metadata; non-red-team responses remain sanitized while red-team includes validator summary text.
+- CSP post-processing now normalizes only trailing punctuation/whitespace in the CSP meta content (`object-src 'none'.` -> `object-src 'none'`) before policy validation and persistence.
+- Artifact generation JSON parsing now uses first-valid-object selection for duplicated model outputs, preferring the first balanced JSON object that matches expected artifact shape.
+- Red-team validation failure dumps now always include full validation details plus rejected normalized candidate HTML, and parse failures write both compatibility (`06_*`/`09_*`) and canonical (`model_output_raw.txt`/`parse_error.json`) files.
 ## Open Issues
 
 - Manifest/schema mismatches now report structured validation errors and dump collateral in red-team mode for diagnosis.

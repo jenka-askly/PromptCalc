@@ -66,6 +66,27 @@ describe("parseArtifactGenerationOutput", () => {
     }
   });
 
+
+  it("uses the first valid artifact object when output contains duplicated JSON", () => {
+    const first = JSON.stringify({
+      artifactHtml: "<html><body>first</body></html>",
+      manifest: buildManifest(),
+    });
+    const second = JSON.stringify({
+      artifactHtml: "<html><body>second</body></html>",
+      manifest: buildManifest(),
+    });
+    const input = `${first}
+${second}`;
+
+    const result = parseArtifactGenerationOutput(input);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.artifactHtml).toContain("first");
+      expect(result.value.artifactHtml).not.toContain("second");
+    }
+  });
   it("accepts already-parsed objects", () => {
     const manifest = buildManifest();
     const input = {

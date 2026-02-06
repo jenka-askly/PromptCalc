@@ -264,6 +264,26 @@ const buildSchemaValidationFailedResponse = (
     skippedByProfile: debug?.skippedByProfile,
   });
 
+const buildHtmlValidationFailedResponse = (
+  traceId: string,
+  dumpPaths?: string[],
+  dumpDir?: string | null,
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
+): HttpResponseInit =>
+  jsonResponse(traceId, 502, {
+    code: "HTML_VALIDATION_FAILED",
+    error: {
+      code: "HTML_VALIDATION_FAILED",
+      type: "HTML_VALIDATION_FAILED",
+      message: "Generated HTML failed validation.",
+    },
+    traceId,
+    dumpDir,
+    dumpPaths,
+    effectiveProfile: debug?.effectiveProfile,
+    profileId: debug?.profileId,
+    skippedByProfile: debug?.skippedByProfile,
+  });
 
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 401, {
@@ -1908,11 +1928,18 @@ const generateCalc = async (
         return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
         }
       } catch (error) {
+        const validationDetails =
+          error && typeof error === "object"
+            ? (error as Record<string, unknown>)
+            : undefined;
         const validationError = {
           validator: "policy_scanner",
           message: error instanceof Error ? error.message : "unknown error",
           type: error instanceof Error ? error.name : typeof error,
           stack: error instanceof Error ? error.stack : undefined,
+          path: typeof validationDetails?.path === "string" ? validationDetails.path : undefined,
+          location: validationDetails?.location,
+          details: validationDetails,
         };
         await dumpArtifacts({
           stage: "error",
@@ -1925,12 +1952,12 @@ const generateCalc = async (
             stack: validationError.stack,
           },
         });
-        const reason = buildRefusalReason(
-          "OPENAI_ERROR",
-          "HTML validation failed before artifact persistence.",
-          "Try a simpler offline calculator prompt."
+        return buildHtmlValidationFailedResponse(
+          traceId,
+          dumpPaths,
+          dumpDir,
+          { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
         );
-        return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
       }
     }
 

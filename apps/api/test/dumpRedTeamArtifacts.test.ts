@@ -105,14 +105,42 @@ describe("dumpRedTeamArtifacts", () => {
 
     expect(dumped).not.toBeNull();
     const rawPath = dumped?.paths.find((entry) => entry.endsWith("06_model_output_raw.txt"));
+    const rawCompatPath = dumped?.paths.find((entry) => entry.endsWith("model_output_raw.txt"));
     const parseErrorPath = dumped?.paths.find((entry) => entry.endsWith("09_parse_error.json"));
+    const parseCompatPath = dumped?.paths.find((entry) => entry.endsWith("parse_error.json"));
     expect(rawPath).toBeTruthy();
+    expect(rawCompatPath).toBeTruthy();
     expect(parseErrorPath).toBeTruthy();
+    expect(parseCompatPath).toBeTruthy();
     expect(await readFile(String(rawPath), "utf8")).toBe('{"artifactHtml":"<html>');
     const parseErrorPayload = JSON.parse(await readFile(String(parseErrorPath), "utf8")) as {
       parseError?: { message?: string };
     };
     expect(parseErrorPayload.parseError?.message).toContain("Unterminated string");
+  });
+
+  it("writes non-empty extracted candidate when validation exists but html is missing", async () => {
+    process.env.PROMPTCALC_REDKIT = "1";
+
+    const dumped = await dumpRedTeamArtifacts({
+      traceId,
+      stage: "error",
+      validation: { validator: "policy_scanner", message: "bad html" },
+      meta: {
+        ts: new Date().toISOString(),
+        model: "test",
+        scanPolicyMode: "warn",
+        overrideArmed: true,
+        overrideUsed: false,
+        dumpCollateral: true,
+      },
+    });
+
+    const htmlPath = dumped?.paths.find((entry) => entry.endsWith("extracted.html"));
+    expect(htmlPath).toBeTruthy();
+    const extractedHtml = await readFile(String(htmlPath), "utf8");
+    expect(extractedHtml.length).toBeGreaterThan(0);
+    expect(extractedHtml).toContain("validation_error.json");
   });
 
 });
