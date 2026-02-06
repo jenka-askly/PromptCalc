@@ -50,6 +50,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Artifact generation parsing now selects the first valid JSON payload from ordered OpenAI `output_text` messages (filtering for `artifactHtml` + `manifest`), reducing truncation/duplication issues while keeping prompt logs red-team only.
 - Red-team collateral bundles now always include `model_output_raw.txt` (concatenated output_texts) and normalized `extracted_candidate.html` alongside parse/validation error JSON for failed generations.
 - Build/version stamping now accompanies generate responses and server logs, and red-team Debug UI + dumps include trace-linked build metadata (see `.promptcalc_artifacts/<traceId>/version.json`).
+- API TypeScript builds now explicitly rely on Node typings (`@types/node` + `types: ["node"]`) for diagnostics/build metadata helpers like `buildStamp`.
 ## Open Issues
 
 - Manifest/schema mismatches now report structured validation errors and dump collateral in red-team mode for diagnosis.
