@@ -144,6 +144,8 @@ const buildSampleManifest = (sample: "good" | "bad") => ({
   executionModel: "form",
   capabilities: {
     network: false,
+    storage: false,
+    dynamicCode: false,
   },
   inputs: [],
   outputs: [],

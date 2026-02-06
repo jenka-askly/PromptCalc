@@ -283,3 +283,30 @@ Security Risks: None.
 
 **Known follow-ups**
 - Add visual polish and responsive/mobile behavior after structural validation on a fully provisioned dev machine.
+
+## 2026-02-06 (UTC)
+**Objective**
+- Fix generator/manifest schema mismatch for standard pocket calculator output and make red-team dumps diagnosable on schema/parse failures.
+
+**Approach**
+- Tightened generation schema + manifest validation to require full `capabilities` booleans (`network`, `storage`, `dynamicCode`) and updated generator system prompt with an explicit JSON skeleton and required-field directive.
+- Added structured artifact output analysis (`parse_error`/`schema_error`) so validation paths produce explicit error records including codes and JSON paths.
+- Wired generation failure handling to emit `SCHEMA_VALIDATION_FAILED`, keep trace/dump metadata, and in red-team mode include validator summary text.
+- Enhanced error-path dumping so collateral mode writes extracted HTML plus validation diagnostics even when schema validation fails.
+
+**Files changed**
+- apps/api/src/functions/calcs.ts
+- apps/api/src/generation/artifactOutput.ts
+- apps/api/test/artifactGenerationParsing.test.ts
+- apps/api/test/dumpRedTeamArtifacts.test.ts
+- apps/web/src/App.tsx
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run + outcomes**
+- `npm -w apps/api test -- --runInBand` ❌ failed (`vitest: not found` in environment)
+- `npm install` ❌ failed (`403 Forbidden` from npm registry in environment)
+
+**Follow-ups**
+- Re-run API test suite in a provisioned dev environment with dependencies installed.
+- Execute live generate call for “Standard pocket calculator” and red-team failure drill with a deliberately broken manifest.

@@ -25,8 +25,10 @@ import {
 } from "../generation/executionModel";
 import { resolveGenerationGate } from "../generation/gate";
 import {
+  analyzeArtifactGenerationOutput,
   parseArtifactGenerationOutput,
   type ArtifactGenerationOutput,
+  type ArtifactValidationError,
 } from "../generation/artifactOutput";
 import {
   formatAiScanIssueSummary,
@@ -232,6 +234,32 @@ const buildOpenAIParseFailedResponse = (
     skippedByProfile: debug?.skippedByProfile,
   });
 
+const buildSchemaValidationFailedResponse = (
+  traceId: string,
+  dumpPaths?: string[],
+  dumpDir?: string | null,
+  validatorSummary?: string,
+  includeDetails = false,
+  debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
+): HttpResponseInit =>
+  jsonResponse(traceId, 502, {
+    code: "SCHEMA_VALIDATION_FAILED",
+    error: {
+      code: "SCHEMA_VALIDATION_FAILED",
+      type: "SCHEMA_VALIDATION_FAILED",
+      message: includeDetails && validatorSummary
+        ? `Generation failed schema validation: ${validatorSummary}`
+        : "Generation failed schema validation.",
+    },
+    traceId,
+    dumpDir,
+    dumpPaths,
+    effectiveProfile: debug?.effectiveProfile,
+    profileId: debug?.profileId,
+    skippedByProfile: debug?.skippedByProfile,
+  });
+
+
 const unauthorizedResponse = (traceId: string): HttpResponseInit =>
   jsonResponse(traceId, 401, {
     code: "UNAUTHORIZED",
@@ -328,8 +356,10 @@ export const generationSchema = {
           additionalProperties: false,
           properties: {
             network: { type: "boolean" },
+            storage: { type: "boolean" },
+            dynamicCode: { type: "boolean" },
           },
-          required: ["network"],
+          required: ["network", "storage", "dynamicCode"],
         },
       },
       required: ["specVersion", "title", "executionModel", "capabilities"],
@@ -500,9 +530,19 @@ const getManifestValidationIssue = (manifest: Record<string, unknown>): string |
     return "manifest.capabilities_missing";
   }
 
-  const network = (capabilities as { network?: unknown }).network;
-  if (network !== false) {
+  const typedCapabilities = capabilities as {
+    network?: unknown;
+    storage?: unknown;
+    dynamicCode?: unknown;
+  };
+  if (typedCapabilities.network !== false) {
     return "manifest.capabilities.network_invalid";
+  }
+  if (typedCapabilities.storage !== false) {
+    return "manifest.capabilities.storage_invalid";
+  }
+  if (typedCapabilities.dynamicCode !== false) {
+    return "manifest.capabilities.dynamicCode_invalid";
   }
 
   return null;
@@ -1015,6 +1055,9 @@ const generateCalc = async (
   let lastScanResponseRaw: unknown;
   let lastGenRequest: unknown;
   let lastGenResponseRaw: unknown;
+  let lastParsedGenerationJson: unknown;
+  let lastExtractedArtifactHtml: string | undefined;
+  let lastValidationErrors: ArtifactValidationError[] = [];
   const dumpPaths: string[] = [];
   let dumpDir: string | null = null;
 
@@ -1122,6 +1165,7 @@ const generateCalc = async (
       genRequest?: unknown;
       genResponseRaw?: unknown;
       html?: string;
+      validation?: unknown;
       error?: { message: string; stack?: string; code?: string; type?: string };
     }): Promise<void> => {
       const dumped = await dumpRedTeamArtifacts({
@@ -1133,6 +1177,7 @@ const generateCalc = async (
         genRequest: params.genRequest,
         genResponseRaw: params.genResponseRaw,
         html: params.html,
+        validation: params.validation,
         error: params.error,
         meta: {
           ts: new Date().toISOString(),
@@ -1415,11 +1460,11 @@ const generateCalc = async (
     "- Include a readiness bootstrap script with id=\"promptcalc-ready\" that posts",
     "  window.parent.postMessage({type:\"ready\"}, \"*\") after DOMContentLoaded.",
     "  It should also respond to {type:\"ping\"} with {type:\"pong\"}.",
-    "- The manifest capabilities.network must be false.",
+    "- The manifest capabilities.network, capabilities.storage, and capabilities.dynamicCode must all be false.",
     "- Do not refuse; classifier already handled refusals.",
-    "Return JSON that exactly matches the schema.",
+    "Return JSON that exactly matches the schema. All fields required by the manifest schema must be present.",
     "JSON schema example:",
-    "{\"artifactHtml\":\"<!doctype html>...\",\"manifest\":{\"specVersion\":\"1.1\",\"title\":\"...\",\"executionModel\":\"form\",\"capabilities\":{\"network\":false}}}",
+    "{\"artifactHtml\":\"<!doctype html>...\",\"manifest\":{\"specVersion\":\"1.1\",\"title\":\"...\",\"executionModel\":\"form\",\"capabilities\":{\"network\":false,\"storage\":false,\"dynamicCode\":false}}}",
   ].join("\\n");
 
   const retryNotice =
@@ -1468,6 +1513,12 @@ const generateCalc = async (
         stage: "error",
         genRequest: lastGenRequest,
         genResponseRaw: lastGenResponseRaw,
+        html: lastExtractedArtifactHtml,
+        validation: {
+          validator: "artifact_generation_output",
+          errors: lastValidationErrors,
+          parsedJsonPresent: lastParsedGenerationJson !== undefined,
+        },
         error: {
           message: error instanceof Error ? error.message : "unknown error",
           stack: error instanceof Error ? error.stack : undefined,
@@ -1610,27 +1661,51 @@ const generateCalc = async (
       return generationOutcome.response;
     }
     const generationResult = generationOutcome.result;
-    const normalized = generationResult
-      ? parseArtifactGenerationOutput(generationResult)
-      : { ok: false as const, reason: "missing_result" };
+    const analyzedOutput = analyzeArtifactGenerationOutput(generationResult ?? lastGenResponseRaw);
+    lastParsedGenerationJson = analyzedOutput.parsedJson;
+    lastExtractedArtifactHtml = analyzedOutput.extractedArtifactHtml;
+    lastValidationErrors = analyzedOutput.validationErrors;
 
-    if (!normalized.ok) {
+    if (analyzedOutput.validationErrors.length > 0 || !analyzedOutput.result) {
+      const normalized = generationResult
+        ? parseArtifactGenerationOutput(generationResult)
+        : { ok: false as const, reason: "missing_result" };
       logEvent({
         level: "warn",
         op,
         traceId,
         event: "artifact.generate.invalid_output",
-        reason: normalized.reason,
+        reason: normalized.ok ? "invalid_output" : normalized.reason,
       });
-      const reason = buildRefusalReason(
-        "INVALID_MODEL_OUTPUT",
-        `Artifact generation returned invalid data. traceId=${traceId}`,
-        "Try a simpler offline calculator prompt."
+      await dumpArtifacts({
+        stage: "error",
+        genRequest: lastGenRequest,
+        genResponseRaw: lastGenResponseRaw,
+        html: analyzedOutput.extractedArtifactHtml,
+        validation: {
+          validator: "artifact_generation_output",
+          failed: "schema",
+          errors: analyzedOutput.validationErrors,
+          parsedJson: analyzedOutput.parsedJson,
+        },
+        error: {
+          message: "Artifact generation failed schema validation.",
+          type: "SCHEMA_VALIDATION_FAILED",
+          code: "SCHEMA_VALIDATION_FAILED",
+        },
+      });
+      const summary = analyzedOutput.validationErrors.map((entry) => `${entry.code}${entry.path ? `@${entry.path}` : ""}`).join(", ");
+      return buildSchemaValidationFailedResponse(
+        traceId,
+        dumpPaths,
+        dumpDir,
+        summary,
+        redTeamEnabled,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
       );
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
     }
 
-    const parsedResult = normalized.value;
+    const parsedResult = analyzedOutput.result;
 
     if ("error" in parsedResult && (parsedResult as { error?: unknown }).error === "REFUSE") {
       const reason = buildRefusalReason(
@@ -1661,11 +1736,29 @@ const generateCalc = async (
 
     const manifestIssue = getManifestValidationIssue(parsedResult.manifest);
     if (manifestIssue) {
-      const reason = buildRefusalReason(
-        "INVALID_MODEL_OUTPUT",
-        `Artifact manifest missing required fields. traceId=${traceId}`,
-        "Try a simpler offline calculator prompt."
-      );
+      lastValidationErrors = [{
+        kind: "schema_error",
+        code: manifestIssue,
+        path: "$.manifest",
+        message: `Manifest validation failed: ${manifestIssue}`,
+      }];
+      await dumpArtifacts({
+        stage: "error",
+        genRequest: lastGenRequest,
+        genResponseRaw: lastGenResponseRaw,
+        html: parsedResult.artifactHtml,
+        validation: {
+          validator: "manifest_postprocess",
+          failed: "schema",
+          errors: lastValidationErrors,
+          parsedJson: lastParsedGenerationJson,
+        },
+        error: {
+          message: "Artifact manifest failed schema validation.",
+          type: "SCHEMA_VALIDATION_FAILED",
+          code: "SCHEMA_VALIDATION_FAILED",
+        },
+      });
       logEvent({
         level: "warn",
         op,
@@ -1673,12 +1766,19 @@ const generateCalc = async (
         event: "artifact.generate.invalid_manifest",
         reason: manifestIssue,
       });
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildSchemaValidationFailedResponse(
+        traceId,
+        dumpPaths,
+        dumpDir,
+        manifestIssue,
+        redTeamEnabled,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+      );
     }
 
     const baseManifest = {
       ...parsedResult.manifest,
-      capabilities: { network: false },
+      capabilities: { network: false, storage: false, dynamicCode: false },
       hash: "",
     } as Record<string, unknown>;
     const postProcessInputHtml = parsedResult.artifactHtml;
