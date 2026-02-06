@@ -548,3 +548,18 @@ Security Risks: None.
 
 **Commands run**
 - `npm run dev`
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Switched diagnostics build stamping to use the Node `process` module import to avoid Azure Functions global process type overrides.
+- Updated project status to document the explicit Node process import for build stamping.
+
+**Files changed**
+- apps/api/src/diagnostics/buildStamp.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run**
+- `npx tsc -p ./apps/api/tsconfig.json --noEmit` *(failed: missing Node type declarations for built-in modules)*
+- `npm -w apps/api run build` *(failed: missing Node type declarations for built-in modules)*
+- `npm run dev` *(failed: concurrently not found in environment)*
