@@ -6,7 +6,7 @@
 
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
-import process from "process";
+import nodeProcess from "process";
 import path from "path";
 
 export type BuildStamp = {
@@ -42,8 +42,8 @@ const resolvePackageVersion = (candidates: string[]): string => {
 };
 
 const resolveGitSha = (): string => {
-  if (process.env.GIT_SHA && process.env.GIT_SHA.trim().length > 0) {
-    return process.env.GIT_SHA.trim();
+  if (nodeProcess.env.GIT_SHA && nodeProcess.env.GIT_SHA.trim().length > 0) {
+    return nodeProcess.env.GIT_SHA.trim();
   }
   try {
     const output = execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] })
@@ -57,14 +57,14 @@ const resolveGitSha = (): string => {
 
 const resolveEnvFlags = (): Record<string, string> => {
   const env = {
-    PROMPTCALC_REDKIT: process.env.PROMPTCALC_REDKIT,
-    PROMPTCALC_OPENAI_TIMEOUT_MS: process.env.PROMPTCALC_OPENAI_TIMEOUT_MS,
-    OPENAI_TIMEOUT_MS: process.env.OPENAI_TIMEOUT_MS,
-    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
-    OPENAI_MAX_TOKENS: process.env.OPENAI_MAX_TOKENS,
-    GENERATION_ENABLED: process.env.GENERATION_ENABLED,
-    AI_SCAN_FAIL_CLOSED: process.env.AI_SCAN_FAIL_CLOSED,
-    PROMPTCALC_ACCEPT_FAKE_EASYAUTH: process.env.PROMPTCALC_ACCEPT_FAKE_EASYAUTH,
+    PROMPTCALC_REDKIT: nodeProcess.env.PROMPTCALC_REDKIT,
+    PROMPTCALC_OPENAI_TIMEOUT_MS: nodeProcess.env.PROMPTCALC_OPENAI_TIMEOUT_MS,
+    OPENAI_TIMEOUT_MS: nodeProcess.env.OPENAI_TIMEOUT_MS,
+    OPENAI_BASE_URL: nodeProcess.env.OPENAI_BASE_URL,
+    OPENAI_MAX_TOKENS: nodeProcess.env.OPENAI_MAX_TOKENS,
+    GENERATION_ENABLED: nodeProcess.env.GENERATION_ENABLED,
+    AI_SCAN_FAIL_CLOSED: nodeProcess.env.AI_SCAN_FAIL_CLOSED,
+    PROMPTCALC_ACCEPT_FAKE_EASYAUTH: nodeProcess.env.PROMPTCALC_ACCEPT_FAKE_EASYAUTH,
   };
   return Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
@@ -72,7 +72,7 @@ const resolveEnvFlags = (): Record<string, string> => {
 };
 
 const resolveBuildStamp = (): BuildStamp => {
-  const cwd = process.cwd();
+  const cwd = nodeProcess.cwd();
   const apiPackageVersion = resolvePackageVersion([
     path.resolve(cwd, "apps/api/package.json"),
     path.resolve(cwd, "package.json"),
@@ -91,9 +91,9 @@ const resolveBuildStamp = (): BuildStamp => {
 
   return {
     app: "PromptCalc",
-    buildTime: process.env.BUILD_TIME || new Date().toISOString(),
+    buildTime: nodeProcess.env.BUILD_TIME || new Date().toISOString(),
     gitSha: resolveGitSha(),
-    nodeVersion: process.version,
+    nodeVersion: nodeProcess.version,
     apiPackageVersion,
     rootPackageVersion,
     webPackageVersion,

@@ -51,7 +51,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Red-team collateral bundles now always include `model_output_raw.txt` (concatenated output_texts) and normalized `extracted_candidate.html` alongside parse/validation error JSON for failed generations.
 - Build/version stamping now accompanies generate responses and server logs, and red-team Debug UI + dumps include trace-linked build metadata (see `.promptcalc_artifacts/<traceId>/version.json`).
 - API TypeScript builds now explicitly rely on Node typings (`@types/node` + `types: ["node"]`) for diagnostics/build metadata helpers like `buildStamp`.
-- Diagnostics build stamp helper now avoids `node:` specifiers for broader tooling compatibility during build.
+- Diagnostics build stamp helper now imports the Node `process` module directly because Azure Functions typings override the global `process` stub during build.
 - API TypeScript config now uses `module: Node16` + `moduleResolution: Node16` so Azure Functions builds resolve `node:` specifier imports.
 ## Open Issues
 
