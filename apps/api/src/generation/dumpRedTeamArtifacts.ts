@@ -84,6 +84,49 @@ const sanitizeForJson = (value: unknown): unknown => {
   ) as unknown;
 };
 
+const extractModelOutputTexts = (raw: unknown): string[] => {
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const payload = raw as { output_text?: unknown; output?: unknown };
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const texts: string[] = [];
+  for (const item of output) {
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const part of content) {
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === "string") {
+        texts.push(text);
+      }
+    }
+  }
+  if (texts.length > 0) {
+    return texts;
+  }
+  if (typeof payload.output_text === "string") {
+    return [payload.output_text];
+  }
+  return [];
+};
+
+const resolveModelOutputRawText = (args: DumpArgs): string => {
+  if (args.parseDetails?.modelOutputRawText !== undefined) {
+    return args.parseDetails.modelOutputRawText;
+  }
+  const genTexts = extractModelOutputTexts(args.genResponseRaw);
+  if (genTexts.length > 0) {
+    return genTexts.join("");
+  }
+  const scanTexts = extractModelOutputTexts(args.scanResponseRaw);
+  if (scanTexts.length > 0) {
+    return scanTexts.join("");
+  }
+  return "";
+};
+
 const writeJson = async (filePath: string, payload: unknown): Promise<void> => {
   await writeFile(filePath, `${JSON.stringify(sanitizeForJson(payload), null, 2)}\n`, "utf8");
 };
@@ -137,9 +180,10 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; 
   if (args.error) {
     await push("error.json", { error: args.error });
   }
+  const modelOutputRawText = resolveModelOutputRawText(args);
+  await push("model_output_raw.txt", modelOutputRawText, true);
   if (args.parseDetails?.modelOutputRawText !== undefined) {
     await push("06_model_output_raw.txt", args.parseDetails.modelOutputRawText, true);
-    await push("model_output_raw.txt", args.parseDetails.modelOutputRawText, true);
   }
   if (args.parseDetails?.parseError) {
     const parsePayload = { parseError: args.parseDetails.parseError };

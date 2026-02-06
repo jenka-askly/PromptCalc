@@ -443,3 +443,29 @@ Security Risks: None.
 
 **Verification steps**
 - Not run (environment not configured for live generation/API/UI checks).
+
+## 2026-02-06 (America/Los_Angeles)
+**Summary**
+- Increased default generation token budget to 8000 and updated local settings/test fixtures to match.
+- Hardened OpenAI JSON extraction to scan ordered output_text messages with optional artifact-shape validation, plus improved abort classification/logging.
+- Normalized CSP content before red-team dump writes and ensured collateral bundles always include model_output_raw.txt with concatenated output_texts.
+
+**Files changed**
+- apps/api/src/openai/client.ts
+- apps/api/src/generation/artifactOutput.ts
+- apps/api/src/functions/calcs.ts
+- apps/api/src/generation/config.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/local.settings.example.json
+- apps/api/test/generationGate.test.ts
+- apps/api/test/openaiClient.test.ts
+- apps/api/test/dumpRedTeamArtifacts.test.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run**
+- `npm -w apps/api test -- openaiClient.test.ts dumpRedTeamArtifacts.test.ts generationGate.test.ts` *(failed: vitest not found in environment)*
+
+**Follow-ups**
+- Re-run targeted vitest suite locally once dependencies are installed.
+- Execute the standard pocket calculator prompt run (5x) plus forced timeout checks per verification notes.

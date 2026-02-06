@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildOpenAIResponsesPayload, type OpenAIRequest } from "../src/openai/client";
+import { buildOpenAIResponsesPayload, parseJsonFromOutputTexts, type OpenAIRequest } from "../src/openai/client";
 
 const baseConfig = {
   apiKey: "test-key",
@@ -58,5 +58,26 @@ describe("buildOpenAIResponsesPayload", () => {
       schema: { type: "object" },
       strict: true,
     });
+  });
+});
+
+describe("parseJsonFromOutputTexts", () => {
+  it("selects the first output text that satisfies a validator", () => {
+    const outputs = [
+      JSON.stringify({ artifactHtml: "<html></html>" }),
+      JSON.stringify({ artifactHtml: "<html></html>", manifest: { ok: true } }),
+    ];
+
+    const parsed = parseJsonFromOutputTexts<Record<string, unknown>>(outputs, (value) => {
+      return Boolean(
+        value &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          typeof (value as Record<string, unknown>).artifactHtml === "string" &&
+          (value as Record<string, unknown>).manifest
+      );
+    });
+
+    expect(parsed.manifest).toEqual({ ok: true });
   });
 });

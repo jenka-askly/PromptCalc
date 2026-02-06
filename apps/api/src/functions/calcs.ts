@@ -27,6 +27,7 @@ import {
 import { resolveGenerationGate } from "../generation/gate";
 import {
   analyzeArtifactGenerationOutput,
+  isArtifactGenerationCandidate,
   parseArtifactGenerationOutput,
   type ArtifactGenerationOutput,
   type ArtifactValidationError,
@@ -273,6 +274,7 @@ const buildOpenAIAbortDumpError = (error: OpenAIRequestAbortedError) => ({
   stack: error.stack,
   type: error.name,
   code: "OPENAI_REQUEST_ABORTED",
+  classification: error.classification,
   timeoutMs: error.timeoutMs,
   elapsedMs: error.elapsedMs,
   model: error.model,
@@ -1265,6 +1267,8 @@ const generateCalc = async (
         modelOutputRawText?: string;
       };
     }): Promise<void> => {
+      const normalizedHtml =
+        typeof params.html === "string" ? normalizeCspMetaContent(params.html).html : params.html;
       const dumped = await dumpRedTeamArtifacts({
         traceId,
         stage: params.stage,
@@ -1273,7 +1277,7 @@ const generateCalc = async (
         scanResponseRaw: params.scanResponseRaw,
         genRequest: params.genRequest,
         genResponseRaw: params.genResponseRaw,
-        html: params.html,
+        html: normalizedHtml,
         validation: params.validation,
         error: params.error,
         parseDetails: params.parseDetails,
@@ -1720,7 +1724,11 @@ const generateCalc = async (
         openAIConfig,
         generationRequestPayload,
         opName,
-        { maxAttempts: 2, devLogOutputExtraction: isDevUser }
+        {
+          maxAttempts: 2,
+          devLogOutputExtraction: isDevUser,
+          jsonResultValidator: isArtifactGenerationCandidate,
+        }
       );
 
       generationResult = generationResponse.parsed;
@@ -1747,7 +1755,11 @@ const generateCalc = async (
             openAIConfig,
             repairRequestPayload,
             `${opName}.repair`,
-            { maxAttempts: 1, devLogOutputExtraction: isDevUser }
+            {
+              maxAttempts: 1,
+              devLogOutputExtraction: isDevUser,
+              jsonResultValidator: isArtifactGenerationCandidate,
+            }
           );
           generationResult = repairResponse.parsed;
           lastGenResponseRaw = repairResponse.raw;

@@ -26,7 +26,7 @@ describe("dumpRedTeamArtifacts", () => {
       traceId,
       stage: "error",
       prompt: "demo",
-      genResponseRaw: { raw: true },
+      genResponseRaw: { output_text: "raw-output" },
       html: "<html><body>artifact</body></html>",
       validation: {
         validator: "artifact_generation_output",
@@ -69,6 +69,9 @@ describe("dumpRedTeamArtifacts", () => {
     };
     expect(validationErrorPayload.validator).toBe("artifact_generation_output");
     expect(validationErrorPayload.details?.failed).toBe("schema");
+    const modelOutputPath = dumped?.paths.find((entry) => entry.endsWith("model_output_raw.txt"));
+    expect(modelOutputPath).toBeTruthy();
+    expect(await readFile(String(modelOutputPath), "utf8")).toBe("raw-output");
   });
 
   it("writes parse failure collateral files when parse details are provided", async () => {
