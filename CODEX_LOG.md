@@ -469,3 +469,20 @@ Security Risks: None.
 **Follow-ups**
 - Re-run targeted vitest suite locally once dependencies are installed.
 - Execute the standard pocket calculator prompt run (5x) plus forced timeout checks per verification notes.
+
+## 2026-02-06 (UTC)
+**Summary**
+- Confirmed API TypeScript config explicitly includes Node typings, with a clarifying note for diagnostics/build metadata helpers.
+- Updated project status to document the Node typings requirement for API build diagnostics.
+
+**Files changed**
+- apps/api/tsconfig.json
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run**
+- `npm install` *(failed: npm registry 403 when fetching concurrently)*
+- `npm run dev` *(failed: concurrently not found because dependencies were not installed)*
+
+**Follow-ups**
+- Retry `npm install` with registry access, then re-run `npm run dev` and verify `http://localhost:7071/api/health` responds without Vite proxy errors.

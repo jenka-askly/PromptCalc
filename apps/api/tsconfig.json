@@ -8,6 +8,7 @@
     "rootDir": "src",
     "module": "commonjs",
     "target": "ES2022",
+    // Ensure Node globals/modules are typed for diagnostics/build metadata helpers.
     "types": ["node"],
     "typeRoots": ["./types", "../../node_modules/@types"]
   },
