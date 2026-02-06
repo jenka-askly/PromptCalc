@@ -426,3 +426,20 @@ Security Risks: None.
 **Verification results**
 - TypeScript build passes for `apps/api`.
 - Targeted tests are updated for CSP normalization edge-case, first-valid JSON extraction with duplicated objects, and red-team collateral naming/contents, but were not executable in this environment due to missing `vitest` binary.
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Added a cached build stamp helper and wired it into generate responses, red-team dumps (`version.json`), and request/error logs for traceable version metadata.
+- Exposed build metadata in the web Debug panel when red-team mode is enabled.
+- Updated project status notes to document build/version stamping locations.
+
+**Files changed**
+- apps/api/src/diagnostics/buildStamp.ts
+- apps/api/src/functions/calcs.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/web/src/App.tsx
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Verification steps**
+- Not run (environment not configured for live generation/API/UI checks).

@@ -47,6 +47,7 @@ Step 5 — End-to-end prototype validation (per README).
 - Artifact generation JSON parsing now uses first-valid-object selection for duplicated model outputs, preferring the first balanced JSON object that matches expected artifact shape.
 - Red-team validation failure dumps now always include full validation details plus rejected normalized candidate HTML, and parse failures write both compatibility (`06_*`/`09_*`) and canonical (`model_output_raw.txt`/`parse_error.json`) files.
 - OpenAI request timeout is configurable via `PROMPTCALC_OPENAI_TIMEOUT_MS` (default 60s, or 180s when `PROMPTCALC_REDKIT=1`), and request aborts are classified as `OPENAI_REQUEST_ABORTED` with red-team dumps capturing timeout/elapsed/model/token diagnostics.
+- Build/version stamping now accompanies generate responses and server logs, and red-team Debug UI + dumps include trace-linked build metadata (see `.promptcalc_artifacts/<traceId>/version.json`).
 ## Open Issues
 
 - Manifest/schema mismatches now report structured validation errors and dump collateral in red-team mode for diagnosis.
@@ -83,6 +84,7 @@ Look for the following dev logs in sequence:
 - Output paths are logged as `[redteam_dump] traceId=<id> files=<path1>;<path2>;...` and indexed in `.promptcalc_artifacts/index.log`.
 - Never ship this behavior; remove or disable red-team dump output before deployment.
 - Abort errors now include timeout/elapsed/model/token diagnostics in red-team `error.json` dumps when `dumpCollateral` is enabled.
+- Full collateral bundles now also include `version.json` with the build stamp for trace correlation.
 
 ## Red-team Debug Profile + collateral dump
 - Added a shared `RedTeamDebugProfile` with normalization/defaults and stable `profileId` hashing for request/response tracing.
