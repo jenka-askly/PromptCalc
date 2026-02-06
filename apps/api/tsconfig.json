@@ -6,7 +6,8 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "module": "commonjs",
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "target": "ES2022",
     // Ensure Node globals/modules are typed for diagnostics/build metadata helpers.
     "types": ["node"],
