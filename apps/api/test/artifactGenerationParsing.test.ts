@@ -6,14 +6,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseArtifactGenerationOutput } from "../src/generation/artifactOutput";
+import { analyzeArtifactGenerationOutput, parseArtifactGenerationOutput } from "../src/generation/artifactOutput";
 import { generationSchema } from "../src/functions/calcs";
 
 const buildManifest = () => ({
   specVersion: "1.1",
   title: "Feed rate calc",
   executionModel: "form",
-  capabilities: { network: false },
+  capabilities: { network: false, storage: false, dynamicCode: false },
 });
 
 describe("parseArtifactGenerationOutput", () => {
@@ -82,6 +82,28 @@ describe("parseArtifactGenerationOutput", () => {
   });
 });
 
+
+describe("analyzeArtifactGenerationOutput", () => {
+  it("returns structured schema errors for incomplete manifest capabilities", () => {
+    const input = {
+      artifactHtml: "<html></html>",
+      manifest: {
+        specVersion: "1.1",
+        title: "Bad",
+        executionModel: "form",
+        capabilities: { network: false },
+      },
+    };
+
+    const analyzed = analyzeArtifactGenerationOutput(input);
+
+    expect(analyzed.result).toBeUndefined();
+    expect(analyzed.extractedArtifactHtml).toBe("<html></html>");
+    expect(analyzed.validationErrors[0]?.kind).toBe("schema_error");
+    expect(analyzed.validationErrors[0]?.code).toBe("manifest.capabilities.storage_missing");
+  });
+});
+
 describe("generationSchema", () => {
   it("marks manifest schema as strict with required keys", () => {
     const manifestSchema = (generationSchema as Record<string, unknown>).properties as Record<
@@ -95,6 +117,6 @@ describe("generationSchema", () => {
     expect(manifest.additionalProperties).toBe(false);
     expect(manifest.required).toEqual(["specVersion", "title", "executionModel", "capabilities"]);
     expect(capabilities.additionalProperties).toBe(false);
-    expect(capabilities.required).toEqual(["network"]);
+    expect(capabilities.required).toEqual(["network", "storage", "dynamicCode"]);
   });
 });

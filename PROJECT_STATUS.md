@@ -40,7 +40,12 @@ Step 5 — End-to-end prototype validation (per README).
 - Resolved workspace type-import compatibility issue by ensuring consumers use named imports from `@promptcalc/types` entrypoint only (no default import / dist-path imports), then rebuilding shared types output.
 - Fixed `@promptcalc/types` entrypoint runtime exports for red-team helpers by explicitly re-exporting `defaultProfile`, `normalizeProfile`, and `profileId` from `shared/types/index.ts`, unblocking Vite browser imports from `shared/types/dist/index.js`.
 
+- Generator system instructions now include an explicit manifest skeleton with full required capabilities booleans (`network`, `storage`, `dynamicCode`) and a strict requirement that all schema-required fields must be present.
+- Red-team collateral dumping now captures validation diagnostics for generation/schema failures: raw model output, parsed JSON (when available), extracted HTML, and structured validation errors.
+- Schema-validation generation failures now return `SCHEMA_VALIDATION_FAILED` with trace/dump metadata; non-red-team responses remain sanitized while red-team includes validator summary text.
 ## Open Issues
+
+- Manifest/schema mismatches now report structured validation errors and dump collateral in red-team mode for diagnosis.
 - Intermittent WATCHDOG_TIMEOUT during artifact load under certain conditions (mostly mitigated; continue monitoring).
 - Viewer load intermittency due to race; resolved by single-flight loadId + iframe key + message correlation.
 - DISALLOWED_PATTERN refusals when model output includes `new Function` for a standard calculator.

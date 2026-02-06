@@ -4,7 +4,7 @@
  * Security Risks: Exercises dev-only dump pipeline that can write raw prompt/model output to disk.
  */
 
-import { rm } from "fs/promises";
+import { readFile, rm } from "fs/promises";
 import path from "path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,8 +24,19 @@ describe("dumpRedTeamArtifacts", () => {
 
     const dumped = await dumpRedTeamArtifacts({
       traceId,
-      stage: "generate",
+      stage: "error",
       prompt: "demo",
+      genResponseRaw: { raw: true },
+      html: "<html><body>artifact</body></html>",
+      validation: {
+        validator: "artifact_generation_output",
+        failed: "schema",
+        errors: [{ code: "manifest.capabilities.storage_missing" }],
+      },
+      error: {
+        message: "schema validation failed",
+        type: "SCHEMA_VALIDATION_FAILED",
+      },
       meta: {
         ts: new Date().toISOString(),
         model: "test",
@@ -39,5 +50,14 @@ describe("dumpRedTeamArtifacts", () => {
     expect(dumped).not.toBeNull();
     expect(dumped?.dumpDir).toBe(dumpRoot);
     expect(dumped?.paths.some((entry) => entry.endsWith("profile.json"))).toBe(true);
+    const htmlPath = dumped?.paths.find((entry) => entry.endsWith("extracted.html"));
+    expect(htmlPath).toBeTruthy();
+    const extractedHtml = await readFile(String(htmlPath), "utf8");
+    expect(extractedHtml.length).toBeGreaterThan(0);
+    const validationPath = dumped?.paths.find((entry) => entry.endsWith("validation.json"));
+    const validationPayload = JSON.parse(await readFile(String(validationPath), "utf8")) as {
+      validation?: { errors?: Array<{ code?: string }> };
+    };
+    expect(validationPayload.validation?.errors?.[0]?.code).toBe("manifest.capabilities.storage_missing");
   });
 });

@@ -10,6 +10,22 @@ export type ArtifactGenerationOutput = {
   notes?: string;
 };
 
+export type ArtifactValidationError = {
+  kind: "parse_error" | "schema_error";
+  code: string;
+  path?: string;
+  message: string;
+  expected?: string;
+  actual?: string;
+};
+
+export type ArtifactOutputAnalysis = {
+  parsedJson?: unknown;
+  extractedArtifactHtml?: string;
+  validationErrors: ArtifactValidationError[];
+  result?: ArtifactGenerationOutput;
+};
+
 type ParseResult =
   | { ok: true; value: ArtifactGenerationOutput }
   | { ok: false; reason: string };
@@ -138,46 +154,120 @@ const validateManifestShape = (manifest: Record<string, unknown>): string | null
   if (typeof capabilities.network !== "boolean") {
     return "manifest.capabilities.network_missing";
   }
+  if (typeof capabilities.storage !== "boolean") {
+    return "manifest.capabilities.storage_missing";
+  }
+  if (typeof capabilities.dynamicCode !== "boolean") {
+    return "manifest.capabilities.dynamicCode_missing";
+  }
   return null;
 };
 
-export const parseArtifactGenerationOutput = (value: unknown): ParseResult => {
+export const analyzeArtifactGenerationOutput = (value: unknown): ArtifactOutputAnalysis => {
   let parsed: unknown;
   try {
     parsed = parseJsonFlexible(value);
-  } catch {
-    return { ok: false, reason: "invalid_json" };
+  } catch (error) {
+    return {
+      validationErrors: [
+        {
+          kind: "parse_error",
+          code: "invalid_json",
+          path: "$",
+          message: error instanceof Error ? error.message : "JSON parse failed",
+          expected: "object",
+          actual: typeof value,
+        },
+      ],
+    };
   }
 
   if (!isRecord(parsed)) {
-    return { ok: false, reason: "result_not_object" };
+    return {
+      parsedJson: parsed,
+      validationErrors: [
+        {
+          kind: "schema_error",
+          code: "result_not_object",
+          path: "$",
+          message: "Root JSON value must be an object.",
+          expected: "object",
+          actual: Array.isArray(parsed) ? "array" : typeof parsed,
+        },
+      ],
+    };
   }
 
   const unwrapped = unwrapWrapperObject(parsed);
   const normalized = normalizeArtifactPayload(unwrapped);
+  const errors: ArtifactValidationError[] = [];
 
   const artifactHtml = normalized.artifactHtml;
+  const extractedArtifactHtml = typeof artifactHtml === "string" ? artifactHtml : undefined;
   if (typeof artifactHtml !== "string" || artifactHtml.trim().length === 0) {
-    return { ok: false, reason: "artifactHtml_missing" };
+    errors.push({
+      kind: "schema_error",
+      code: "artifactHtml_missing",
+      path: "$.artifactHtml",
+      message: "artifactHtml is required and must be a non-empty string.",
+      expected: "non-empty string",
+      actual: typeof artifactHtml,
+    });
   }
 
   const manifest = normalized.manifest;
   if (!isRecord(manifest)) {
-    return { ok: false, reason: "manifest_missing" };
+    errors.push({
+      kind: "schema_error",
+      code: "manifest_missing",
+      path: "$.manifest",
+      message: "manifest is required and must be an object.",
+      expected: "object",
+      actual: Array.isArray(manifest) ? "array" : typeof manifest,
+    });
+  } else {
+    const manifestIssue = validateManifestShape(manifest);
+    if (manifestIssue) {
+      errors.push({
+        kind: "schema_error",
+        code: manifestIssue,
+        path: "$.manifest",
+        message: `Manifest validation failed: ${manifestIssue}`,
+      });
+    }
   }
 
-  const manifestIssue = validateManifestShape(manifest);
-  if (manifestIssue) {
-    return { ok: false, reason: manifestIssue };
+  if (errors.length > 0) {
+    return {
+      parsedJson: parsed,
+      extractedArtifactHtml,
+      validationErrors: errors,
+    };
   }
 
   const notes = typeof normalized.notes === "string" ? normalized.notes : undefined;
   return {
-    ok: true,
-    value: {
-      artifactHtml,
-      manifest,
+    parsedJson: parsed,
+    extractedArtifactHtml,
+    validationErrors: [],
+    result: {
+      artifactHtml: artifactHtml as string,
+      manifest: manifest as Record<string, unknown>,
       ...(notes ? { notes } : {}),
     },
+  };
+};
+
+export const parseArtifactGenerationOutput = (value: unknown): ParseResult => {
+  const analyzed = analyzeArtifactGenerationOutput(value);
+  if (analyzed.validationErrors.length > 0) {
+    return { ok: false, reason: analyzed.validationErrors[0]?.code ?? "invalid_output" };
+  }
+  if (!analyzed.result) {
+    return { ok: false, reason: "invalid_output" };
+  }
+  return {
+    ok: true,
+    value: analyzed.result,
   };
 };
