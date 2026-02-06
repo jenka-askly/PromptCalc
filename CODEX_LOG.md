@@ -310,3 +310,29 @@ Security Risks: None.
 **Follow-ups**
 - Re-run API test suite in a provisioned dev environment with dependencies installed.
 - Execute live generate call for “Standard pocket calculator” and red-team failure drill with a deliberately broken manifest.
+
+## 2026-02-05 (America/Los_Angeles)
+**Objective**
+- Prevent truncation-driven calculator generation failures and make JSON parse failures fully diagnosable in red-team artifact dumps.
+
+**Approach**
+- Increased generation output budget by raising default `OPENAI_MAX_TOKENS` fallback from 2500 to 7000 while keeping model pinning unchanged.
+- Extended OpenAI parse-error metadata capture with parse message/stack and output prefix/suffix snippets; propagated this into generation error dumps.
+- Classified generation parse failures as `MODEL_OUTPUT_JSON_INVALID` (API + UI handling), and added dedicated dump files `06_model_output_raw.txt` and `09_parse_error.json` in collateral mode.
+
+**Files changed**
+- apps/api/src/generation/config.ts
+- apps/api/src/openai/client.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/src/functions/calcs.ts
+- apps/api/test/dumpRedTeamArtifacts.test.ts
+- apps/web/src/App.tsx
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run + outcomes**
+- `npm -w apps/api test -- dumpRedTeamArtifacts.test.ts` ❌ failed (`vitest: not found` in environment)
+- `npm -w apps/api test -- openaiClient.test.ts` ❌ failed (`vitest: not found` in environment)
+
+**Follow-ups**
+- Run end-to-end `/api/calcs/generate` with red-team `dumpCollateral=true` and a real OpenAI key to validate the standard pocket calculator path and forced truncation drill.

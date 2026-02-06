@@ -100,12 +100,25 @@ export class OpenAIBadRequestError extends Error {
 export class OpenAIParseError extends Error {
   rawText: string;
   attempt: number;
+  parseErrorMessage: string;
+  parseErrorStack?: string;
+  snippetPrefix: string;
+  snippetSuffix: string;
 
-  constructor(message: string, rawText: string, attempt: number) {
+  constructor(
+    message: string,
+    rawText: string,
+    attempt: number,
+    details?: { parseErrorMessage?: string; parseErrorStack?: string; snippetPrefix?: string; snippetSuffix?: string }
+  ) {
     super(message);
     this.name = "OpenAIParseError";
     this.rawText = rawText;
     this.attempt = attempt;
+    this.parseErrorMessage = details?.parseErrorMessage ?? message;
+    this.parseErrorStack = details?.parseErrorStack;
+    this.snippetPrefix = details?.snippetPrefix ?? "";
+    this.snippetSuffix = details?.snippetSuffix ?? "";
   }
 }
 
@@ -489,20 +502,32 @@ export const callOpenAIResponses = async <T>(
             raw: payload,
           };
         } catch (error) {
-          const snippet =
-            typeof outputText === "string" ? truncateMessage(outputText, 200) : "unavailable";
-          const message = `JSON parse failed. outputSnippet=${snippet}`;
+          const parseErrorMessage = error instanceof Error ? error.message : "JSON parse failed";
+          const snippetPrefix =
+            typeof outputText === "string" ? outputText.slice(0, 200) : "";
+          const snippetSuffix =
+            typeof outputText === "string" && outputText.length > 200
+              ? outputText.slice(-200)
+              : typeof outputText === "string"
+                ? outputText
+                : "";
+          const message = `JSON parse failed. parseError=${parseErrorMessage}`;
           logEvent({
             level: "warn",
             op,
             traceId,
             event: "openai.responses.parse_failed",
             attempt,
-            message: error instanceof Error ? error.message : "JSON parse failed",
-            outputSample:
-              typeof outputText === "string" ? truncateMessage(outputText, 120) : undefined,
+            message: parseErrorMessage,
+            outputPrefixSample: snippetPrefix || undefined,
+            outputSuffixSample: snippetSuffix || undefined,
           });
-          lastError = new OpenAIParseError(message, outputText ?? "", attempt);
+          lastError = new OpenAIParseError(message, outputText ?? "", attempt, {
+            parseErrorMessage,
+            parseErrorStack: error instanceof Error ? error.stack : undefined,
+            snippetPrefix,
+            snippetSuffix,
+          });
           shouldRetry = true;
         }
       }

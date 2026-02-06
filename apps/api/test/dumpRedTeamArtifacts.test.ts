@@ -60,4 +60,49 @@ describe("dumpRedTeamArtifacts", () => {
     };
     expect(validationPayload.validation?.errors?.[0]?.code).toBe("manifest.capabilities.storage_missing");
   });
+
+  it("writes parse failure collateral files when parse details are provided", async () => {
+    process.env.PROMPTCALC_REDKIT = "1";
+
+    const dumped = await dumpRedTeamArtifacts({
+      traceId,
+      stage: "error",
+      prompt: "demo",
+      genResponseRaw: { raw: true },
+      error: {
+        message: "JSON parse failed",
+        type: "OpenAIParseError",
+        code: "MODEL_OUTPUT_JSON_INVALID",
+      },
+      parseDetails: {
+        modelOutputRawText: '{"artifactHtml":"<html>',
+        parseError: {
+          message: "Unterminated string in JSON at position 22",
+          stack: "SyntaxError: Unterminated string",
+          snippetPrefix: '{"artifactHtml":"<html>',
+          snippetSuffix: '{"artifactHtml":"<html>',
+        },
+      },
+      meta: {
+        ts: new Date().toISOString(),
+        model: "test",
+        scanPolicyMode: "warn",
+        overrideArmed: true,
+        overrideUsed: false,
+        dumpCollateral: true,
+      },
+    });
+
+    expect(dumped).not.toBeNull();
+    const rawPath = dumped?.paths.find((entry) => entry.endsWith("06_model_output_raw.txt"));
+    const parseErrorPath = dumped?.paths.find((entry) => entry.endsWith("09_parse_error.json"));
+    expect(rawPath).toBeTruthy();
+    expect(parseErrorPath).toBeTruthy();
+    expect(await readFile(String(rawPath), "utf8")).toBe('{"artifactHtml":"<html>');
+    const parseErrorPayload = JSON.parse(await readFile(String(parseErrorPath), "utf8")) as {
+      parseError?: { message?: string };
+    };
+    expect(parseErrorPayload.parseError?.message).toContain("Unterminated string");
+  });
+
 });
