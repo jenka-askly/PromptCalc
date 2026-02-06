@@ -7,6 +7,7 @@
 import { logEvent } from "@promptcalc/logger";
 
 import { getMaxArtifactBytes } from "../storage";
+import { isRedTeamEnabled } from "./scanPolicy";
 
 export type GenerationConfig = {
   enabled: boolean;
@@ -41,6 +42,12 @@ const resolveOpenAIModel = (): string => PINNED_OPENAI_MODEL;
 const resolveOpenAIBaseUrl = (): string =>
   process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 
+const resolveOpenAITimeoutMs = (): number => {
+  const defaultTimeoutMs = isRedTeamEnabled() ? 180_000 : 60_000;
+  const envOverride = process.env.PROMPTCALC_OPENAI_TIMEOUT_MS ?? process.env.OPENAI_TIMEOUT_MS;
+  return parseNumber(envOverride, defaultTimeoutMs);
+};
+
 export const validateOpenAIConfig = (): void => {
   const model = resolveOpenAIModel();
   if (!model) {
@@ -60,7 +67,7 @@ export const getGenerationConfig = async (): Promise<GenerationConfig> => ({
   apiKey: process.env.OPENAI_API_KEY,
   model: resolveOpenAIModel(),
   baseUrl: resolveOpenAIBaseUrl(),
-  timeoutMs: parseNumber(process.env.OPENAI_TIMEOUT_MS, 25_000),
+  timeoutMs: resolveOpenAITimeoutMs(),
   maxTokens: parseNumber(process.env.OPENAI_MAX_TOKENS, 7_000),
   maxArtifactBytes: await getMaxArtifactBytes(),
   aiScanFailClosed: parseBoolean(process.env.AI_SCAN_FAIL_CLOSED, false),

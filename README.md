@@ -38,7 +38,7 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
   - `OPENAI_BASE_URL=https://api.openai.com/v1`
   - `GENERATION_ENABLED=true`
   - `MAX_ARTIFACT_BYTES=200000`
-  - `OPENAI_TIMEOUT_MS=25000`
+  - `PROMPTCALC_OPENAI_TIMEOUT_MS=60000`
   - `OPENAI_MAX_TOKENS=2500`
 - To run Azurite locally:
   - Install Azurite (`npm install -g azurite`) or run it via Docker.
@@ -75,7 +75,7 @@ PromptCalc is a spec-driven prototype for turning prompts into constrained, offl
 - `OPENAI_BASE_URL`
 - `GENERATION_ENABLED`
 - `MAX_ARTIFACT_BYTES`
-- `OPENAI_TIMEOUT_MS`
+- `PROMPTCALC_OPENAI_TIMEOUT_MS` (or legacy `OPENAI_TIMEOUT_MS`)
 - `OPENAI_MAX_TOKENS`
 - Do not set `DEV_USER_ID` in production.
 

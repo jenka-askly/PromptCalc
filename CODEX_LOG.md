@@ -6,6 +6,43 @@ Security Risks: None.
 
 # CODEX Log
 
+## 2026-02-06 (UTC)
+**Objective**
+- Make OpenAI Responses timeout configurable, classify aborts as OPENAI_REQUEST_ABORTED, and improve abort diagnostics in logs/dumps.
+
+**Approach**
+- Added a request-aborted error class with timeout/elapsed/model/token diagnostics, logged abort events, and wired abort handling into generation/scan responses.
+- Parameterized timeout via `PROMPTCALC_OPENAI_TIMEOUT_MS` with red-team default escalation and documented the new config.
+
+**Files Touched**
+- apps/api/src/openai/client.ts
+- apps/api/src/generation/config.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/src/generation/response.ts
+- apps/api/src/functions/calcs.ts
+- apps/api/local.settings.example.json
+- README.md
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands Run**
+- `rg -n "openai" apps/api/src`
+- `sed -n '1,240p' apps/api/src/openai/client.ts`
+- `sed -n '1,160p' apps/api/src/generation/config.ts`
+- `sed -n '1,240p' apps/api/src/generation/dumpRedTeamArtifacts.ts`
+- `rg -n "dump" apps/api/src/functions/calcs.ts`
+- `sed -n '1040,1705p' apps/api/src/functions/calcs.ts`
+- `sed -n '1,220p' apps/api/src/generation/response.ts`
+- `rg -n "OPENAI_TIMEOUT_MS|PROMPTCALC_OPENAI_TIMEOUT_MS" -S`
+- `sed -n '1,120p' README.md`
+- `cat apps/api/local.settings.example.json`
+
+**Outcomes**
+- Added abort classification + diagnostics and configurable OpenAI timeout defaults (60s, 180s when red-team enabled).
+
+**Follow-ups**
+- Run the manual verification steps to confirm abort classification and new timeout behavior.
+
 ## 2026-02-05
 **Summary**
 - Fixed PromptScanDecision schema strictness (required + additionalProperties) to resolve OpenAI 400 OPENAI_BAD_REQUEST and unblock generation.
