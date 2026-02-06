@@ -108,7 +108,17 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; 
   await push("gen_request.json", { genRequest: args.genRequest });
   await push("gen_response_raw.json", { genResponseRaw: args.genResponseRaw });
   await push("extracted.html", args.html ?? "", true);
+  await push("extracted_candidate.html", args.html ?? "", true);
   await push("validation.json", { validation: args.validation, skippedSteps: args.meta.skippedSteps ?? [] });
+  if (args.validation) {
+    await push("validation_error.json", {
+      validator: (args.validation as Record<string, unknown>).validator,
+      message: (args.validation as Record<string, unknown>).message,
+      path: (args.validation as Record<string, unknown>).path,
+      location: (args.validation as Record<string, unknown>).location,
+      details: args.validation,
+    });
+  }
   if (args.error) {
     await push("error.json", { error: args.error });
   }

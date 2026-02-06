@@ -97,3 +97,9 @@ Look for the following dev logs in sequence:
 - Increased default generation token budget for calculator generation to reduce truncation risk (`OPENAI_MAX_TOKENS` default now 7000).
 - Generation JSON parse failures are now classified as `MODEL_OUTPUT_JSON_INVALID` and include trace/dump metadata in API responses.
 - In red-team + `dumpCollateral` mode, parse failures now always dump full raw model text (`06_model_output_raw.txt`) and parse exception details (`09_parse_error.json`) alongside existing `gen_response_raw.json`, `validation.json`, and `profile.json`.
+
+## Update (2026-02-06 UTC)
+- Added narrow CSP meta normalization in post-processing to trim only trailing `.` from `Content-Security-Policy` meta `content` before HTML validation/scanning and persistence.
+- Hardened generator instructions with an exact CSP meta tag line and explicit rule forbidding trailing punctuation/extra characters in CSP content.
+- Improved red-team collateral diagnostics: collateral bundles now include `extracted_candidate.html` and `validation_error.json` with validator/error details when validation data is present.
+- Added HTML-validation error handling in generation flow to dump validator metadata plus candidate HTML instead of failing silently.

@@ -336,3 +336,30 @@ Security Risks: None.
 
 **Follow-ups**
 - Run end-to-end `/api/calcs/generate` with red-team `dumpCollateral=true` and a real OpenAI key to validate the standard pocket calculator path and forced truncation drill.
+
+## 2026-02-06 (UTC)
+**Objective**
+- Prevent CSP trailing-punctuation false negatives in HTML validation and make validation failures diagnosable in red-team dumps.
+
+**Approach**
+- Added targeted CSP normalization for `<meta http-equiv="Content-Security-Policy">` content in artifact post-processing (trim trailing `.` only).
+- Applied normalization in generation pipeline before scan/validation and manifest embedding.
+- Tightened generator system prompt to include exact CSP tag text and an explicit “no trailing punctuation” rule.
+- Expanded red-team collateral bundle output with `extracted_candidate.html` and `validation_error.json`.
+- Added defensive catch around HTML validation scanner path to dump candidate HTML + validator/error details on thrown exceptions.
+- Added regression tests for CSP normalization and collateral validation-error files.
+
+**Files changed**
+- apps/api/src/generation/artifactPostprocess.ts
+- apps/api/src/functions/calcs.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/test/artifactPostprocess.test.ts
+- apps/api/test/dumpRedTeamArtifacts.test.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run + outcomes**
+- `npm -w apps/api test -- artifactPostprocess.test.ts dumpRedTeamArtifacts.test.ts` (see latest run result below)
+
+**Follow-ups**
+- Run live `/api/calcs/generate` with a standard calculator prompt in a provisioned environment with OpenAI key to confirm end-to-end acceptance.

@@ -43,7 +43,7 @@ import {
   buildGenerateScanWarnResponse,
   type RefusalReason,
 } from "../generation/response";
-import { ensureFormSafety } from "../generation/artifactPostprocess";
+import { ensureFormSafety, normalizeCspMetaContent } from "../generation/artifactPostprocess";
 import {
   callOpenAIResponses,
   OpenAIBadRequestError,
@@ -1465,8 +1465,9 @@ const generateCalc = async (
     "- Output MUST be a single JSON object with no markdown, code fences, or commentary.",
     "- Return JSON only. No markdown. No prose.",
     "- If you cannot comply, output exactly: {\"error\":\"REFUSE\"}.",
-    "- Include a CSP meta tag with: default-src 'none'; connect-src 'none'; img-src 'none';",
-    "  script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'.",
+    "- Include this exact CSP meta tag line verbatim:",
+    "  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src 'none'; img-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'\">",
+    "- Do not add trailing punctuation or extra characters to the CSP content string.",
     "- No external scripts, links, fonts, images, iframes, or network requests.",
     "- No popups or navigation changes.",
     "- Include this banner text in the body: \"Generated calculator (offline). Do not enter passwords.\"",
@@ -1821,10 +1822,20 @@ const generateCalc = async (
     const readyHtml = effectiveProfile.postProcess
       ? ensureReadyBootstrap(formSafetyResult.html)
       : formSafetyResult.html;
-    const placeholderHtml = embedManifestInHtml(readyHtml, baseManifest);
+    const cspNormalized = normalizeCspMetaContent(readyHtml);
+    const normalizedHtml = cspNormalized.html;
+    if (cspNormalized.normalized) {
+      logEvent({
+        level: "info",
+        op,
+        traceId,
+        event: "artifact.csp.normalized",
+      });
+    }
+    const placeholderHtml = embedManifestInHtml(normalizedHtml, baseManifest);
     const manifestHash = computeSha256(placeholderHtml);
     finalManifest = { ...baseManifest, hash: manifestHash } as Record<string, unknown>;
-    finalHtml = embedManifestInHtml(readyHtml, finalManifest);
+    finalHtml = embedManifestInHtml(normalizedHtml, finalManifest);
 
     finalArtifactBytes = Buffer.byteLength(finalHtml, "utf8");
     if (finalArtifactBytes > config.maxArtifactBytes) {
@@ -1865,35 +1876,61 @@ const generateCalc = async (
     if (!effectiveProfile.htmlValidation) {
       skippedByProfile.add("htmlValidation");
     } else {
-      const scanResult = scanArtifactHtml(finalHtml, policy);
-      if (!scanResult.ok) {
-      const reason = buildRefusalReason(
-        scanResult.code,
-        scanResult.message,
-        "Use a simple offline calculator without external data or scripts.",
-        {
+      try {
+        const scanResult = scanArtifactHtml(finalHtml, policy);
+        if (!scanResult.ok) {
+        const reason = buildRefusalReason(
+          scanResult.code,
+          scanResult.message,
+          "Use a simple offline calculator without external data or scripts.",
+          {
+            matchIndex: scanResult.matchIndex,
+            contextSnippet: scanResult.contextSnippet,
+          }
+        );
+        logEvent({
+          level: "warn",
+          op,
+          traceId,
+          event: "artifact.scan.failed",
+          ruleId: scanResult.ruleId,
+          code: scanResult.code,
           matchIndex: scanResult.matchIndex,
           contextSnippet: scanResult.contextSnippet,
+        });
+        const shouldRetry =
+          attempt === 0 &&
+          scanResult.code === "DISALLOWED_PATTERN" &&
+          scanResult.ruleId?.includes("Function(");
+        if (shouldRetry) {
+          continue;
         }
-      );
-      logEvent({
-        level: "warn",
-        op,
-        traceId,
-        event: "artifact.scan.failed",
-        ruleId: scanResult.ruleId,
-        code: scanResult.code,
-        matchIndex: scanResult.matchIndex,
-        contextSnippet: scanResult.contextSnippet,
-      });
-      const shouldRetry =
-        attempt === 0 &&
-        scanResult.code === "DISALLOWED_PATTERN" &&
-        scanResult.ruleId?.includes("Function(");
-      if (shouldRetry) {
-        continue;
-      }
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+        return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+        }
+      } catch (error) {
+        const validationError = {
+          validator: "policy_scanner",
+          message: error instanceof Error ? error.message : "unknown error",
+          type: error instanceof Error ? error.name : typeof error,
+          stack: error instanceof Error ? error.stack : undefined,
+        };
+        await dumpArtifacts({
+          stage: "error",
+          html: finalHtml,
+          validation: validationError,
+          error: {
+            message: validationError.message,
+            type: validationError.type,
+            code: "HTML_VALIDATION_FAILED",
+            stack: validationError.stack,
+          },
+        });
+        const reason = buildRefusalReason(
+          "OPENAI_ERROR",
+          "HTML validation failed before artifact persistence.",
+          "Try a simpler offline calculator prompt."
+        );
+        return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
       }
     }
 

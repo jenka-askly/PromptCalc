@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ensureFormSafety } from "../src/generation/artifactPostprocess";
+import { ensureFormSafety, normalizeCspMetaContent } from "../src/generation/artifactPostprocess";
 
 describe("ensureFormSafety", () => {
   it("rewrites form buttons and injects submit prevention", () => {
@@ -25,6 +25,28 @@ describe("ensureFormSafety", () => {
     const result = ensureFormSafety(input);
 
     expect(result.containsForm).toBe(false);
+    expect(result.html).toBe(input);
+  });
+});
+
+
+describe("normalizeCspMetaContent", () => {
+  it("removes trailing period from CSP meta content", () => {
+    const input = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'."></head><body>ok</body></html>`;
+
+    const result = normalizeCspMetaContent(input);
+
+    expect(result.normalized).toBe(true);
+    expect(result.html).toContain("content=\"default-src 'none'; object-src 'none'\"");
+    expect(result.html).not.toContain("object-src 'none'.");
+  });
+
+  it("does not change CSP meta content without trailing period", () => {
+    const input = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'"></head><body>ok</body></html>`;
+
+    const result = normalizeCspMetaContent(input);
+
+    expect(result.normalized).toBe(false);
     expect(result.html).toBe(input);
   });
 });

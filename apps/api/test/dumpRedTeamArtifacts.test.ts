@@ -59,6 +59,16 @@ describe("dumpRedTeamArtifacts", () => {
       validation?: { errors?: Array<{ code?: string }> };
     };
     expect(validationPayload.validation?.errors?.[0]?.code).toBe("manifest.capabilities.storage_missing");
+    const candidatePath = dumped?.paths.find((entry) => entry.endsWith("extracted_candidate.html"));
+    expect(candidatePath).toBeTruthy();
+    const validationErrorPath = dumped?.paths.find((entry) => entry.endsWith("validation_error.json"));
+    expect(validationErrorPath).toBeTruthy();
+    const validationErrorPayload = JSON.parse(await readFile(String(validationErrorPath), "utf8")) as {
+      validator?: string;
+      details?: { failed?: string };
+    };
+    expect(validationErrorPayload.validator).toBe("artifact_generation_output");
+    expect(validationErrorPayload.details?.failed).toBe("schema");
   });
 
   it("writes parse failure collateral files when parse details are provided", async () => {
