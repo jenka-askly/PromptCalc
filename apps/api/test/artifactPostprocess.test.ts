@@ -41,6 +41,15 @@ describe("normalizeCspMetaContent", () => {
     expect(result.html).not.toContain("object-src 'none'.");
   });
 
+
+  it("trims surrounding whitespace while removing trailing period", () => {
+    const input = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="  default-src 'none'; object-src 'none'.   "></head><body>ok</body></html>`;
+
+    const result = normalizeCspMetaContent(input);
+
+    expect(result.normalized).toBe(true);
+    expect(result.html).toContain("content=\"default-src 'none'; object-src 'none'\"");
+  });
   it("does not change CSP meta content without trailing period", () => {
     const input = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'"></head><body>ok</body></html>`;
 

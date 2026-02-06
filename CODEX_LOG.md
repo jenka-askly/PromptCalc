@@ -363,3 +363,29 @@ Security Risks: None.
 
 **Follow-ups**
 - Run live `/api/calcs/generate` with a standard calculator prompt in a provisioned environment with OpenAI key to confirm end-to-end acceptance.
+
+## 2026-02-05 (America/Los_Angeles)
+**Summary**
+- Hardened artifact JSON extraction to scan balanced JSON objects and choose the first successfully parsed candidate matching expected artifact shape, preventing duplicated model output blocks from overriding the primary result.
+- Kept CSP normalization narrowly scoped to CSP meta `content` only: trim whitespace and strip a trailing `.` before downstream validation/persistence.
+- Improved red-team error diagnostics for validation/parse failures by returning `HTML_VALIDATION_FAILED` API errors with dump metadata and by writing canonical parse collateral files (`model_output_raw.txt`, `parse_error.json`) in addition to existing numbered files.
+- Ensured collateral dumps avoid silent empty extracted HTML on validation failures by emitting an explicit placeholder pointing to `validation_error.json` when HTML is unavailable.
+
+**Files changed**
+- apps/api/src/generation/artifactOutput.ts
+- apps/api/src/generation/artifactPostprocess.ts
+- apps/api/src/generation/dumpRedTeamArtifacts.ts
+- apps/api/src/functions/calcs.ts
+- apps/api/test/artifactGenerationParsing.test.ts
+- apps/api/test/artifactPostprocess.test.ts
+- apps/api/test/dumpRedTeamArtifacts.test.ts
+- PROJECT_STATUS.md
+- CODEX_LOG.md
+
+**Commands run**
+- `npm -w apps/api test -- artifactPostprocess.test.ts artifactGenerationParsing.test.ts dumpRedTeamArtifacts.test.ts` *(failed: vitest not found in environment)*
+- `npm -w apps/api run build` *(passed)*
+
+**Verification results**
+- TypeScript build passes for `apps/api`.
+- Targeted tests are updated for CSP normalization edge-case, first-valid JSON extraction with duplicated objects, and red-team collateral naming/contents, but were not executable in this environment due to missing `vitest` binary.

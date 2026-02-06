@@ -49,12 +49,12 @@ export const normalizeCspMetaContent = (
     }
 
     const originalContent = contentMatch[2];
-    const trimmedRight = originalContent.trimEnd();
-    if (!trimmedRight.endsWith(".")) {
+    const trimmed = originalContent.trim();
+    if (!trimmed.endsWith(".")) {
       return metaTag;
     }
 
-    const normalizedContent = trimmedRight.slice(0, -1).trimEnd();
+    const normalizedContent = trimmed.slice(0, -1).trimEnd();
     normalized = true;
     return metaTag.replace(contentMatch[0], `content=${contentMatch[1]}${normalizedContent}${contentMatch[1]}`);
   });

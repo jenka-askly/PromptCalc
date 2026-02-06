@@ -107,8 +107,11 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; 
   await push("scan_response_raw.json", { scanResponseRaw: args.scanResponseRaw });
   await push("gen_request.json", { genRequest: args.genRequest });
   await push("gen_response_raw.json", { genResponseRaw: args.genResponseRaw });
-  await push("extracted.html", args.html ?? "", true);
-  await push("extracted_candidate.html", args.html ?? "", true);
+  const extractedHtml = typeof args.html === "string" && args.html.length > 0
+    ? args.html
+    : (args.validation ? "<!-- extracted HTML unavailable: see validation_error.json -->" : "");
+  await push("extracted.html", extractedHtml, true);
+  await push("extracted_candidate.html", extractedHtml, true);
   await push("validation.json", { validation: args.validation, skippedSteps: args.meta.skippedSteps ?? [] });
   if (args.validation) {
     await push("validation_error.json", {
@@ -124,9 +127,12 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; 
   }
   if (args.parseDetails?.modelOutputRawText !== undefined) {
     await push("06_model_output_raw.txt", args.parseDetails.modelOutputRawText, true);
+    await push("model_output_raw.txt", args.parseDetails.modelOutputRawText, true);
   }
   if (args.parseDetails?.parseError) {
-    await push("09_parse_error.json", { parseError: args.parseDetails.parseError });
+    const parsePayload = { parseError: args.parseDetails.parseError };
+    await push("09_parse_error.json", parsePayload);
+    await push("parse_error.json", parsePayload);
   }
 
   return { dumpDir: traceDir, paths };

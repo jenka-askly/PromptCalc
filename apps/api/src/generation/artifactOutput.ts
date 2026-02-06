@@ -33,17 +33,14 @@ type ParseResult =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const extractFirstJsonObject = (value: string): string | null => {
-  const start = value.indexOf("{");
-  if (start === -1) {
-    return null;
-  }
-
-  let depth = 0;
+const extractBalancedJsonObjects = (value: string): string[] => {
+  const candidates: string[] = [];
   let inString = false;
   let escaped = false;
+  let depth = 0;
+  let start = -1;
 
-  for (let index = start; index < value.length; index += 1) {
+  for (let index = 0; index < value.length; index += 1) {
     const char = value[index];
     if (inString) {
       if (escaped) {
@@ -62,19 +59,29 @@ const extractFirstJsonObject = (value: string): string | null => {
     }
 
     if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
       if (depth === 0) {
-        return value.slice(start, index + 1);
+        start = index;
+      }
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start !== -1) {
+        candidates.push(value.slice(start, index + 1));
+        start = -1;
       }
     }
   }
 
-  return null;
+  return candidates;
 };
 
-const parseJsonFlexible = (value: unknown): unknown => {
+const parseJsonFlexible = (
+  value: unknown,
+  isExpectedShape?: (candidate: unknown) => boolean
+): unknown => {
   if (isRecord(value)) {
     return value;
   }
@@ -86,12 +93,40 @@ const parseJsonFlexible = (value: unknown): unknown => {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch (error) {
-    const candidate = extractFirstJsonObject(trimmed);
-    if (!candidate) {
+    const candidates = extractBalancedJsonObjects(trimmed);
+    if (candidates.length === 0) {
       throw error;
     }
-    return JSON.parse(candidate) as unknown;
+    let firstParsed: unknown;
+    let firstParsedSet = false;
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate) as unknown;
+        if (!firstParsedSet) {
+          firstParsed = parsed;
+          firstParsedSet = true;
+        }
+        if (!isExpectedShape || isExpectedShape(parsed)) {
+          return parsed;
+        }
+      } catch {
+        // Continue scanning for the first valid balanced JSON object.
+      }
+    }
+
+    if (firstParsedSet) {
+      return firstParsed;
+    }
+    throw error;
   }
+};
+
+const hasExpectedArtifactShape = (value: unknown): boolean => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const candidate = normalizeArtifactPayload(unwrapWrapperObject(value));
+  return typeof candidate.artifactHtml === "string" && isRecord(candidate.manifest);
 };
 
 const unwrapWrapperObject = (value: Record<string, unknown>): Record<string, unknown> => {
@@ -166,7 +201,7 @@ const validateManifestShape = (manifest: Record<string, unknown>): string | null
 export const analyzeArtifactGenerationOutput = (value: unknown): ArtifactOutputAnalysis => {
   let parsed: unknown;
   try {
-    parsed = parseJsonFlexible(value);
+    parsed = parseJsonFlexible(value, hasExpectedArtifactShape);
   } catch (error) {
     return {
       validationErrors: [
