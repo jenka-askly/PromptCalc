@@ -16,6 +16,7 @@ import { logEvent } from "@promptcalc/logger";
 import type { RefusalCode } from "@promptcalc/types";
 
 import { getUserContext } from "../auth";
+import { getBuildStamp, type BuildStamp } from "../diagnostics/buildStamp";
 import { getGenerationConfig } from "../generation/config";
 import { resolveRuntimeScanPolicyMode, resolveScanPolicyConfig } from "../generation/scanPolicy";
 import { dumpRedTeamArtifacts } from "../generation/dumpRedTeamArtifacts";
@@ -206,6 +207,7 @@ const buildOpenAIBadRequestRefusal = (): RefusalReason =>
 const buildOpenAIBadRequestResponse = (
   traceId: string,
   status: number,
+  build: BuildStamp,
   dumpPaths?: string[],
   dumpDir?: string | null,
   debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
@@ -213,6 +215,7 @@ const buildOpenAIBadRequestResponse = (
   jsonResponse(traceId, status, {
     ...buildGenerateScanBlockResponse(buildOpenAIBadRequestRefusal()),
     traceId,
+    build,
     dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
@@ -222,6 +225,7 @@ const buildOpenAIBadRequestResponse = (
 
 const buildOpenAIParseFailedResponse = (
   traceId: string,
+  build: BuildStamp,
   dumpPaths?: string[],
   dumpDir?: string | null,
   debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
@@ -234,6 +238,7 @@ const buildOpenAIParseFailedResponse = (
       message: "Model output was invalid JSON.",
     },
     traceId,
+    build,
     dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
@@ -244,6 +249,7 @@ const buildOpenAIParseFailedResponse = (
 const buildOpenAIRequestAbortedResponse = (
   traceId: string,
   status: number,
+  build: BuildStamp,
   dumpPaths?: string[],
   dumpDir?: string | null,
   debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
@@ -254,6 +260,7 @@ const buildOpenAIRequestAbortedResponse = (
       "OpenAI request timed out/aborted. See dump folder."
     ),
     traceId,
+    build,
     dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
@@ -275,6 +282,7 @@ const buildOpenAIAbortDumpError = (error: OpenAIRequestAbortedError) => ({
 
 const buildSchemaValidationFailedResponse = (
   traceId: string,
+  build: BuildStamp,
   dumpPaths?: string[],
   dumpDir?: string | null,
   validatorSummary?: string,
@@ -291,6 +299,7 @@ const buildSchemaValidationFailedResponse = (
         : "Generation failed schema validation.",
     },
     traceId,
+    build,
     dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
@@ -300,6 +309,7 @@ const buildSchemaValidationFailedResponse = (
 
 const buildHtmlValidationFailedResponse = (
   traceId: string,
+  build: BuildStamp,
   dumpPaths?: string[],
   dumpDir?: string | null,
   debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] }
@@ -312,6 +322,7 @@ const buildHtmlValidationFailedResponse = (
       message: "Generated HTML failed validation.",
     },
     traceId,
+    build,
     dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
@@ -553,6 +564,7 @@ const buildRefusalResponse = (
   traceId: string,
   status: number,
   reason: RefusalReason,
+  build: BuildStamp,
   dumpPaths?: string[],
   debug?: { effectiveProfile?: RedTeamDebugProfile; profileId?: string; skippedByProfile?: string[] },
   dumpDir?: string | null
@@ -560,6 +572,7 @@ const buildRefusalResponse = (
   jsonResponse(traceId, status, {
     ...buildGenerateScanBlockResponse(reason),
     traceId,
+    build,
     dumpDir,
     dumpPaths,
     effectiveProfile: debug?.effectiveProfile,
@@ -1097,6 +1110,12 @@ const generateCalc = async (
   context: InvocationContext
 ): Promise<HttpResponseInit> => {
   const traceId = getTraceId(req.headers.get("traceparent"));
+  const buildStamp = getBuildStamp();
+  const buildLogFields = {
+    build_git_sha: buildStamp.gitSha,
+    build_time: buildStamp.buildTime,
+    api_version: buildStamp.apiPackageVersion,
+  };
   const startedAt = Date.now();
   const op = "calcs.generate";
   const { userId: requestUserId, isAuthenticated, identityProvider } = getUserContext(req);
@@ -1138,6 +1157,7 @@ const generateCalc = async (
       promptLen: prompt.length,
       baseCalcId: body?.baseCalcId,
       baseVersionId: body?.baseVersionId,
+      ...buildLogFields,
     });
 
     if (!isAuthenticated && !isDevUser) {
@@ -1149,8 +1169,13 @@ const generateCalc = async (
         event: "request.end",
         durationMs,
         status: 401,
+        ...buildLogFields,
       });
-      return unauthorizedResponse(traceId);
+      return jsonResponse(traceId, 401, {
+        code: "UNAUTHORIZED",
+        traceId,
+        build: buildStamp,
+      });
     }
 
     if (!body || prompt.length === 0) {
@@ -1162,10 +1187,12 @@ const generateCalc = async (
         event: "request.end",
         durationMs,
         status: 400,
+        ...buildLogFields,
       });
       return jsonResponse(traceId, 400, {
         code: "BAD_REQUEST",
         message: "prompt is required.",
+        build: buildStamp,
       });
     }
 
@@ -1180,7 +1207,7 @@ const generateCalc = async (
         event: "generation.gated",
         code: gateReason.code,
       });
-      return buildRefusalResponse(traceId, 200, gateReason, dumpPaths, undefined, dumpDir);
+      return buildRefusalResponse(traceId, 200, gateReason, buildStamp, dumpPaths, undefined, dumpDir);
     }
 
     if (!config.apiKey || config.apiKey.trim().length === 0) {
@@ -1189,10 +1216,12 @@ const generateCalc = async (
         op,
         traceId,
         event: "openai.not_configured",
+        ...buildLogFields,
       });
       return jsonResponse(traceId, 500, {
         code: "OPENAI_NOT_CONFIGURED",
         traceId,
+        build: buildStamp,
       });
     }
 
@@ -1310,6 +1339,7 @@ const generateCalc = async (
         return jsonResponse(traceId, 200, {
           ...buildGenerateScanSkippedResponse(),
           traceId,
+          build: buildStamp,
           dumpDir,
           dumpPaths,
           effectiveProfile,
@@ -1375,7 +1405,14 @@ const generateCalc = async (
               type: error.name,
             },
           });
-          return buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+          return buildOpenAIBadRequestResponse(
+            traceId,
+            502,
+            buildStamp,
+            dumpPaths,
+            dumpDir,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+          );
         }
         if (error instanceof OpenAIRequestAbortedError) {
           logEvent({
@@ -1396,7 +1433,14 @@ const generateCalc = async (
             scanResponseRaw: lastScanResponseRaw,
             error: buildOpenAIAbortDumpError(error),
           });
-          return buildOpenAIRequestAbortedResponse(traceId, 504, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+          return buildOpenAIRequestAbortedResponse(
+            traceId,
+            504,
+            buildStamp,
+            dumpPaths,
+            dumpDir,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+          );
         }
         if (error instanceof OpenAIParseError) {
           logEvent({
@@ -1420,7 +1464,13 @@ const generateCalc = async (
               type: error.name,
             },
           });
-          return buildOpenAIParseFailedResponse(traceId, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] });
+          return buildOpenAIParseFailedResponse(
+            traceId,
+            buildStamp,
+            dumpPaths,
+            dumpDir,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+          );
         }
         const reason = buildRefusalReason(
           "OPENAI_ERROR",
@@ -1437,6 +1487,7 @@ const generateCalc = async (
           scan_outcome: "error",
           override_armed: redTeamEnabled,
           override_used: false,
+          ...buildLogFields,
         });
         await dumpArtifacts({
           stage: "error",
@@ -1448,7 +1499,15 @@ const generateCalc = async (
             type: error instanceof Error ? error.name : typeof error,
           },
         });
-        return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+        return buildRefusalResponse(
+          traceId,
+          502,
+          reason,
+          buildStamp,
+          dumpPaths,
+          { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+          dumpDir
+        );
       }
 
       scanOutcome = promptDecision?.allowed ? "allow" : "deny";
@@ -1482,6 +1541,7 @@ const generateCalc = async (
                 reason: promptDecision.reason,
               }),
               traceId,
+              build: buildStamp,
               dumpDir,
               dumpPaths,
               effectiveProfile,
@@ -1497,7 +1557,15 @@ const generateCalc = async (
             promptDecision.reason,
             promptDecision.safeAlternative
           );
-          return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+          return buildRefusalResponse(
+            traceId,
+            200,
+            reason,
+            buildStamp,
+            dumpPaths,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+            dumpDir
+          );
         }
       }
     }
@@ -1687,11 +1755,29 @@ const generateCalc = async (
         } catch (repairError) {
           if (repairError instanceof OpenAIBadRequestError) {
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+            return {
+              response: buildOpenAIBadRequestResponse(
+                traceId,
+                502,
+                buildStamp,
+                dumpPaths,
+                dumpDir,
+                { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+              ),
+            };
           }
           if (repairError instanceof OpenAIRequestAbortedError) {
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIRequestAbortedResponse(traceId, 504, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+            return {
+              response: buildOpenAIRequestAbortedResponse(
+                traceId,
+                504,
+                buildStamp,
+                dumpPaths,
+                dumpDir,
+                { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+              ),
+            };
           }
           if (repairError instanceof OpenAIParseError) {
             logEvent({
@@ -1702,7 +1788,15 @@ const generateCalc = async (
               message: repairError.message,
             });
             await dumpGenerationError(repairError);
-            return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+            return {
+              response: buildOpenAIParseFailedResponse(
+                traceId,
+                buildStamp,
+                dumpPaths,
+                dumpDir,
+                { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+              ),
+            };
           }
           const reason = buildRefusalReason(
             "OPENAI_ERROR",
@@ -1715,16 +1809,45 @@ const generateCalc = async (
             traceId,
             event: "artifact.generate.failed",
             message: repairError instanceof Error ? repairError.message : "unknown error",
+            ...buildLogFields,
           });
           await dumpGenerationError(repairError);
-          return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir) };
+          return {
+            response: buildRefusalResponse(
+              traceId,
+              502,
+              reason,
+              buildStamp,
+              dumpPaths,
+              { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+              dumpDir
+            ),
+          };
         }
       } else if (error instanceof OpenAIBadRequestError) {
         await dumpGenerationError(error);
-        return { response: buildOpenAIBadRequestResponse(traceId, 502, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+        return {
+          response: buildOpenAIBadRequestResponse(
+            traceId,
+            502,
+            buildStamp,
+            dumpPaths,
+            dumpDir,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+          ),
+        };
       } else if (error instanceof OpenAIRequestAbortedError) {
         await dumpGenerationError(error);
-        return { response: buildOpenAIRequestAbortedResponse(traceId, 504, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+        return {
+          response: buildOpenAIRequestAbortedResponse(
+            traceId,
+            504,
+            buildStamp,
+            dumpPaths,
+            dumpDir,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+          ),
+        };
       }
 
       if (!(error instanceof OpenAIParseError)) {
@@ -1739,9 +1862,20 @@ const generateCalc = async (
           traceId,
           event: "artifact.generate.failed",
           message: error instanceof Error ? error.message : "unknown error",
+          ...buildLogFields,
         });
         await dumpGenerationError(error);
-        return { response: buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir) };
+        return {
+          response: buildRefusalResponse(
+            traceId,
+            502,
+            reason,
+            buildStamp,
+            dumpPaths,
+            { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+            dumpDir
+          ),
+        };
       }
 
       logEvent({
@@ -1752,7 +1886,15 @@ const generateCalc = async (
         message: error.message,
       });
       await dumpGenerationError(error);
-      return { response: buildOpenAIParseFailedResponse(traceId, dumpPaths, dumpDir, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }) };
+      return {
+        response: buildOpenAIParseFailedResponse(
+          traceId,
+          buildStamp,
+          dumpPaths,
+          dumpDir,
+          { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
+        ),
+      };
     }
 
     return { result: generationResult ?? undefined };
@@ -1812,6 +1954,7 @@ const generateCalc = async (
       const summary = analyzedOutput.validationErrors.map((entry) => `${entry.code}${entry.path ? `@${entry.path}` : ""}`).join(", ");
       return buildSchemaValidationFailedResponse(
         traceId,
+        buildStamp,
         dumpPaths,
         dumpDir,
         summary,
@@ -1828,7 +1971,15 @@ const generateCalc = async (
         `Artifact generation refused. traceId=${traceId}`,
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        200,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
 
     artifactBytes = Buffer.byteLength(parsedResult.artifactHtml, "utf8");
@@ -1846,7 +1997,15 @@ const generateCalc = async (
         artifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        200,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
 
     const manifestIssue = getManifestValidationIssue(parsedResult.manifest);
@@ -1883,6 +2042,7 @@ const generateCalc = async (
       });
       return buildSchemaValidationFailedResponse(
         traceId,
+        buildStamp,
         dumpPaths,
         dumpDir,
         manifestIssue,
@@ -1936,7 +2096,15 @@ const generateCalc = async (
         artifactBytes: finalArtifactBytes,
         maxArtifactBytes: config.maxArtifactBytes,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        200,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
 
     if (
@@ -1954,7 +2122,15 @@ const generateCalc = async (
         traceId,
         event: "artifact.evaluator.missing",
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        200,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
 
     if (!effectiveProfile.htmlValidation) {
@@ -1989,7 +2165,15 @@ const generateCalc = async (
         if (shouldRetry) {
           continue;
         }
-        return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+        return buildRefusalResponse(
+          traceId,
+          200,
+          reason,
+          buildStamp,
+          dumpPaths,
+          { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+          dumpDir
+        );
         }
       } catch (error) {
         const validationDetails =
@@ -2018,6 +2202,7 @@ const generateCalc = async (
         });
         return buildHtmlValidationFailedResponse(
           traceId,
+          buildStamp,
           dumpPaths,
           dumpDir,
           { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }
@@ -2041,7 +2226,15 @@ const generateCalc = async (
       `Artifact generation did not produce a valid manifest. traceId=${traceId}`,
       "Try a simpler offline calculator prompt."
     );
-    return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+    return buildRefusalResponse(
+      traceId,
+      502,
+      reason,
+      buildStamp,
+      dumpPaths,
+      { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+      dumpDir
+    );
   }
 
   if (!effectiveProfile.htmlValidation) {
@@ -2172,7 +2365,15 @@ const generateCalc = async (
         issues: issueLog.summaryJson,
         issueSummaryLines: issueLog.summaryLines,
       });
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        200,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
     if (parsedIssues.length > 0) {
       const allowedLog = buildAiScanIssueLogPayload(allowed);
@@ -2217,7 +2418,15 @@ const generateCalc = async (
         "AI code scan failed.",
         "Use a smaller, simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 200, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        200,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
   }
   }
@@ -2235,7 +2444,15 @@ const generateCalc = async (
         "Generated manifest is missing required fields.",
         "Try a simpler offline calculator prompt."
       );
-      return buildRefusalResponse(traceId, 502, reason, dumpPaths, { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] }, dumpDir);
+      return buildRefusalResponse(
+        traceId,
+        502,
+        reason,
+        buildStamp,
+        dumpPaths,
+        { effectiveProfile, profileId: effectiveProfileHash, skippedByProfile: [...skippedByProfile] },
+        dumpDir
+      );
     }
 
     const calcId = normalizeId(body.baseCalcId || randomUUID());
@@ -2334,6 +2551,7 @@ const generateCalc = async (
     return jsonResponse(traceId, 200, {
       ...buildGenerateOkResponse(calcId, versionId, finalManifest, finalHtml, scanOutcome, overrideUsed),
       traceId,
+      build: buildStamp,
       dumpDir,
       dumpPaths,
       effectiveProfile,
@@ -2385,6 +2603,7 @@ const generateCalc = async (
       event: "request.end",
       durationMs,
       status: 500,
+      ...buildLogFields,
     });
     logEvent({
       level: "error",
@@ -2392,6 +2611,7 @@ const generateCalc = async (
       traceId,
       event: "request.error",
       message: error instanceof Error ? error.message : "unknown error",
+      ...buildLogFields,
     });
     return jsonResponse(traceId, 500, {
       error: {
@@ -2399,6 +2619,7 @@ const generateCalc = async (
         type: error instanceof Error ? error.name : typeof error,
       },
       traceId,
+      build: buildStamp,
       dumpDir,
       dumpPaths,
       effectiveProfile: effectiveProfileForDump,

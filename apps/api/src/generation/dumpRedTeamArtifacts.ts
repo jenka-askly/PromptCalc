@@ -7,6 +7,7 @@
 import { appendFile, mkdir, writeFile } from "fs/promises";
 import path from "path";
 
+import { getBuildStamp } from "../diagnostics/buildStamp";
 import { isRedTeamEnabled, type ScanPolicyMode } from "./scanPolicy";
 
 type DumpStage = "scan" | "generate" | "viewer" | "error";
@@ -111,6 +112,7 @@ const dumpCollateralBundle = async (args: DumpArgs): Promise<{ dumpDir: string; 
     envFlags,
     skippedSteps: args.meta.skippedSteps ?? [],
   });
+  await push("version.json", getBuildStamp());
   await push("prompt.txt", args.prompt ?? "", true);
   await push("system.txt", args.meta.systemInstructions ?? "", true);
   await push("scan_request.json", { scanRequest: args.scanRequest });

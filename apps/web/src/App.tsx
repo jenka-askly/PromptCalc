@@ -60,10 +60,22 @@ interface GenerateRefusalDetail {
   evidence?: string;
 }
 
+interface BuildStamp {
+  app: string;
+  buildTime: string;
+  gitSha: string;
+  nodeVersion: string;
+  apiPackageVersion: string;
+  rootPackageVersion: string;
+  webPackageVersion: string;
+  env?: Record<string, string>;
+}
+
 interface GenerateResponseDiagnostics {
   traceId?: string;
   dumpDir?: string | null;
   dumpPaths?: string[];
+  build?: BuildStamp;
   profileId?: string;
   effectiveProfile?: RedTeamDebugProfile;
   skippedByProfile?: string[];
@@ -85,6 +97,7 @@ type GenerateCalcResponse =
       traceId?: string;
       dumpDir?: string | null;
       dumpPaths?: string[];
+      build?: BuildStamp;
       calcId: string;
       versionId: string;
       manifest: Record<string, unknown>;
@@ -99,6 +112,7 @@ type GenerateCalcResponse =
       traceId?: string;
       dumpDir?: string | null;
       dumpPaths?: string[];
+      build?: BuildStamp;
     }
   | {
       kind: "scan_warn";
@@ -107,6 +121,7 @@ type GenerateCalcResponse =
       traceId?: string;
       dumpDir?: string | null;
       dumpPaths?: string[];
+      build?: BuildStamp;
       scanDecision: {
         refusalCode: string | null;
         categories: string[];
@@ -120,6 +135,7 @@ type GenerateCalcResponse =
       traceId?: string;
       dumpDir?: string | null;
       dumpPaths?: string[];
+      build?: BuildStamp;
     };
 
 type AuthState =
@@ -224,6 +240,7 @@ const App = () => {
   const [generateTraceId, setGenerateTraceId] = useState<string | null>(null);
   const [generateDumpDir, setGenerateDumpDir] = useState<string | null>(null);
   const [generateDumpPaths, setGenerateDumpPaths] = useState<string[]>([]);
+  const [generateBuild, setGenerateBuild] = useState<BuildStamp | null>(null);
   const [effectiveProfileSummary, setEffectiveProfileSummary] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [redTeamProfile, setRedTeamProfile] = useState<RedTeamDebugProfile>(() => defaultProfile());
@@ -445,6 +462,7 @@ const App = () => {
     setGenerateTraceId(null);
     setGenerateDumpDir(null);
     setGenerateDumpPaths([]);
+    setGenerateBuild(null);
     setEffectiveProfileSummary(null);
     setCalcsError(null);
     setIsGenerating(true);
@@ -484,6 +502,7 @@ const App = () => {
       setGenerateTraceId(typeof data.traceId === "string" ? data.traceId : null);
       setGenerateDumpDir(typeof data.dumpDir === "string" ? data.dumpDir : null);
       setGenerateDumpPaths(Array.isArray(data.dumpPaths) ? data.dumpPaths : []);
+      setGenerateBuild(data.build ?? null);
       if (data.effectiveProfile) {
         setEffectiveProfileSummary(`profileId=${data.profileId ?? "n/a"} ${JSON.stringify(data.effectiveProfile)}`);
       }
@@ -752,6 +771,37 @@ const App = () => {
                   setRedTeamProfile(defaultProfile());
                 }}>Reset</button>
               </div>
+              {redTeamProfile.enabled && (
+                <div className="build-stamp">
+                  <strong>Build</strong>
+                  {generateBuild ? (
+                    <dl>
+                      <div>
+                        <dt>Git SHA</dt>
+                        <dd>{generateBuild.gitSha}</dd>
+                      </div>
+                      <div>
+                        <dt>Build time</dt>
+                        <dd>{generateBuild.buildTime}</dd>
+                      </div>
+                      <div>
+                        <dt>API version</dt>
+                        <dd>{generateBuild.apiPackageVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Web version</dt>
+                        <dd>{generateBuild.webPackageVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Trace ID</dt>
+                        <dd>{generateTraceId ?? traceId ?? "n/a"}</dd>
+                      </div>
+                    </dl>
+                  ) : (
+                    <p className="status">Generate a calculator to capture the build stamp.</p>
+                  )}
+                </div>
+              )}
             </details>
           )}
 
